@@ -16,12 +16,28 @@ def test_mysql_connection():
         user = os.getenv('DB_USERNAME', 'doadmin')
         password = os.getenv('DB_PASSWORD', 'AVNS_q6pjJ1Aego6vWH4f1Wk')
         database = os.getenv('DB_NAME', 'defaultdb')
+        ssl_cert = os.getenv('DB_CERTIFICATE')
         
         print(f"🔌 Tentativo di connessione a MySQL...")
         print(f"   Host: {host}")
         print(f"   Port: {port}")
         print(f"   User: {user}")
         print(f"   Database: {database}")
+        print(f"   SSL Certificate: {'Personalizzato' if ssl_cert else 'Sistema'}")
+        
+        # Configurazione SSL
+        ssl_config = {}
+        if ssl_cert:
+            # Usa il certificato personalizzato
+            ssl_config = {
+                'ssl': {
+                    'ca': ssl_cert,
+                    'check_hostname': False
+                }
+            }
+        else:
+            # Usa SSL di default
+            ssl_config = {'ssl': {}}
         
         # Connessione al database
         connection = pymysql.connect(
@@ -30,7 +46,7 @@ def test_mysql_connection():
             user=user,
             password=password,
             database=database,
-            ssl={'ssl': {}},
+            **ssl_config,
             charset='utf8mb4',
             cursorclass=pymysql.cursors.DictCursor
         )
@@ -88,6 +104,21 @@ def create_test_table():
         user = os.getenv('DB_USERNAME', 'doadmin')
         password = os.getenv('DB_PASSWORD', 'AVNS_q6pjJ1Aego6vWH4f1Wk')
         database = os.getenv('DB_NAME', 'defaultdb')
+        ssl_cert = os.getenv('DB_CERTIFICATE')
+        
+        # Configurazione SSL
+        ssl_config = {}
+        if ssl_cert:
+            # Usa il certificato personalizzato
+            ssl_config = {
+                'ssl': {
+                    'ca': ssl_cert,
+                    'check_hostname': False
+                }
+            }
+        else:
+            # Usa SSL di default
+            ssl_config = {'ssl': {}}
         
         connection = pymysql.connect(
             host=host,
@@ -95,7 +126,7 @@ def create_test_table():
             user=user,
             password=password,
             database=database,
-            ssl={'ssl': {}},
+            **ssl_config,
             charset='utf8mb4',
             cursorclass=pymysql.cursors.DictCursor
         )

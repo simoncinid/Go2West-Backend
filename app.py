@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
+import tempfile
 from dotenv import load_dotenv
 import pymysql
 
@@ -17,6 +18,30 @@ app = Flask(__name__)
 # Configurazione CORS per permettere le richieste dal frontend
 CORS(app)
 
+# Variabile globale per il file del certificato SSL
+ssl_cert_file = None
+
+def create_ssl_cert_file():
+    """Crea un file temporaneo con il certificato SSL"""
+    global ssl_cert_file
+    
+    ssl_cert_content = os.getenv('DB_CERTIFICATE')
+    if not ssl_cert_content:
+        return None
+    
+    try:
+        # Crea un file temporaneo con il certificato
+        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False)
+        temp_file.write(ssl_cert_content)
+        temp_file.close()
+        
+        ssl_cert_file = temp_file.name
+        return ssl_cert_file
+        
+    except Exception as e:
+        print(f"Errore nella creazione del file certificato: {e}")
+        return None
+
 # Configurazione del database MySQL
 def get_database_url():
     # Se abbiamo le variabili d'ambiente per MySQL, usiamo quelle
@@ -26,7 +51,21 @@ def get_database_url():
         host = os.getenv('DB_HOST')
         port = os.getenv('DB_PORT')
         database = os.getenv('DB_NAME')
-        return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
+        
+        # Se abbiamo un certificato SSL personalizzato, usiamo quello
+        if os.getenv('DB_CERTIFICATE'):
+            # Crea il file del certificato se non esiste
+            if not ssl_cert_file:
+                create_ssl_cert_file()
+            
+            if ssl_cert_file:
+                return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca={ssl_cert_file}"
+            else:
+                # Fallback al certificato di sistema se la creazione fallisce
+                return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
+        else:
+            # Fallback al certificato di sistema
+            return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
     else:
         # Fallback a SQLite per sviluppo locale
         return os.getenv('DATABASE_URL', 'sqlite:///tours.db')
