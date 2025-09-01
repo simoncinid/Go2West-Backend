@@ -6,7 +6,7 @@ Backend Python Flask per l'API di Go2West Travel.
 
 - **Gestione Tour**: CRUD completo per i tour di viaggio
 - **Autenticazione**: Sistema di autenticazione per l'admin panel
-- **Database**: Supporto per PostgreSQL (produzione) e SQLite (sviluppo)
+- **Database**: Supporto per MySQL (produzione) e SQLite (sviluppo)
 - **CORS**: Configurato per permettere richieste dal frontend React
 
 ## Struttura del Database
@@ -72,9 +72,17 @@ pip install -r requirements.txt
 4. **Configura le variabili d'ambiente**
 Crea un file `.env` nella root del progetto:
 ```env
+# Per sviluppo locale con SQLite
 DATABASE_URL=sqlite:///tours.db
 PORT=5000
 FLASK_ENV=development
+
+# Per produzione con MySQL (opzionale per test locale)
+DB_USERNAME=doadmin
+DB_PASSWORD=AVNS_q6pjJ1Aego6vWH4f1Wk
+DB_HOST=db-mysql-fra1-09501-do-user-24280960-0.l.db.ondigitalocean.com
+DB_PORT=25060
+DB_NAME=defaultdb
 ```
 
 5. **Avvia il server**
@@ -89,7 +97,11 @@ Il server sarà disponibile su `http://localhost:5000`
 1. **Crea un nuovo Web Service su Render**
 2. **Connetti il repository GitHub**
 3. **Configura le variabili d'ambiente**:
-   - `DATABASE_URL`: URL del database PostgreSQL di Render
+   - `DB_USERNAME`: doadmin
+   - `DB_PASSWORD`: AVNS_q6pjJ1Aego6vWH4f1Wk
+   - `DB_HOST`: db-mysql-fra1-09501-do-user-24280960-0.l.db.ondigitalocean.com
+   - `DB_PORT`: 25060
+   - `DB_NAME`: defaultdb
    - `PORT`: 10000 (porta standard di Render)
 4. **Build Command**: `pip install -r requirements.txt`
 5. **Start Command**: `gunicorn app:app`
@@ -97,12 +109,16 @@ Il server sarà disponibile su `http://localhost:5000`
 ## Variabili d'Ambiente
 
 ### Sviluppo Locale
-- `DATABASE_URL`: URL del database SQLite
+- `DATABASE_URL`: URL del database SQLite (default)
 - `PORT`: Porta del server (default: 5000)
 - `FLASK_ENV`: Ambiente Flask (development/production)
 
-### Produzione (Render)
-- `DATABASE_URL`: URL del database PostgreSQL di Render
+### Produzione (Render + MySQL)
+- `DB_USERNAME`: Username del database MySQL
+- `DB_PASSWORD`: Password del database MySQL
+- `DB_HOST`: Host del database MySQL
+- `DB_PORT`: Porta del database MySQL
+- `DB_NAME`: Nome del database MySQL
 - `PORT`: Porta del server (default: 10000)
 
 ## Esempio di Richiesta API
@@ -135,3 +151,5 @@ curl http://localhost:5000/api/tours
 - Gli array sono salvati come stringhe separate da virgole nel database
 - CORS è configurato per permettere richieste da `http://localhost:3000` (frontend React)
 - Il server usa Gunicorn in produzione per migliori performance
+- MySQL richiede SSL per le connessioni esterne
+- Il pool di connessioni è configurato per gestire connessioni persistenti

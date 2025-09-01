@@ -4,6 +4,10 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import os
 from dotenv import load_dotenv
+import pymysql
+
+# Registra PyMySQL come driver MySQL
+pymysql.install_as_MySQLdb()
 
 # Carica le variabili d'ambiente
 load_dotenv()
@@ -13,9 +17,26 @@ app = Flask(__name__)
 # Configurazione CORS per permettere le richieste dal frontend
 CORS(app)
 
-# Configurazione del database
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///tours.db')
+# Configurazione del database MySQL
+def get_database_url():
+    # Se abbiamo le variabili d'ambiente per MySQL, usiamo quelle
+    if all(os.getenv(var) for var in ['DB_USERNAME', 'DB_PASSWORD', 'DB_HOST', 'DB_PORT', 'DB_NAME']):
+        username = os.getenv('DB_USERNAME')
+        password = os.getenv('DB_PASSWORD')
+        host = os.getenv('DB_HOST')
+        port = os.getenv('DB_PORT')
+        database = os.getenv('DB_NAME')
+        return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
+    else:
+        # Fallback a SQLite per sviluppo locale
+        return os.getenv('DATABASE_URL', 'sqlite:///tours.db')
+
+app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    'pool_recycle': 300,
+    'pool_pre_ping': True
+}
 
 db = SQLAlchemy(app)
 
