@@ -22,34 +22,14 @@ CORS(app)
 ssl_cert_file = None
 
 def create_ssl_cert_file():
-    """Crea un file temporaneo con il certificato SSL"""
+    """Crea un file temporaneo con il certificato SSL dalla variabile d'ambiente"""
     global ssl_cert_file
     
-    # Contenuto del certificato SSL di DigitalOcean (sostituisci con il tuo certificato)
-    ssl_cert_content = """-----BEGIN CERTIFICATE-----
-MIIDrzCCApegAwIBAgIQCDvgVpBCRrGhdWrJWZHHSjANBgkqhkiG9w0BAQUFADBh
-MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
-d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBD
-QTAeFw0wNjExMTAwMDAwMDBaFw0zMTExMTAwMDAwMDBaMGExCzAJBgNVBAYTAlVT
-MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j
-b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IENBMIIBIjANBgkqhkiG
-9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4jvhEXLeqKTTo1eqUKKPC3eQyaKl7hLOllsB
-CSDMAZOnTjC3U/dDxGkAV53ijSLdhwZAAIEJzs4bg7/fzTtxRuLWZscFs3YnFo97
-nh6Vfe63SKMI2tavegw5BmV/Sl0fvBf4q77uKNd0f3p4mVmFaG5cIzJLv07A6Fpt4
-3C/dxC//AH2hdmoRBBYMql1GNXRor5H4idq9Joz+EkIYIvUX7Q6hL+hqkpMfT7PT
-19sdl6gSzeRntwi5m3OFBqOasv+zbMUZBfHWymeMr/y7vrTC0LUq7dBMtoM1O/4g
-dW7jVg/tRvoSSiicNoxBN33shbyTApOB6jtSj1etX+jkMOvJwIDAQABo2MwYTAOBg
-NVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUA95QNVbRj
-TtmVK4mG9p6AtvMxwHwYDVR0jBBgwFoAUA95QNVbRjTtmVK4mG9p6AtvMxwDQYJ
-KoZIhvcNAQEFBQADggEBJucV9kwKt1l2ONwWwSlr4gfxCd6FomG7ynrAhacAi2V3
-XKL5hq1DdWJ6Jcp3IlV98AVI/R3E6U3U9MSlMQ5XYFwSLCfhJW9D88Y8yV2fbf4E
-1b9RqKjm7QZjT33wpm+KzD/j3vqu+3sDPXvNLtgXeOc4IufcU6iF+OJ4U7a2OPnY
-CshSNUD0MYE35L5E45U4R4Y7G35QilltCaZerjwF2yRPvEL8v3puL5tYpuM7CpI
-3JADv+up1sWwH/RpawNJSdR1NkzDKX5a/abAR/BC+F1j1ehBJUiWQKwhYhZfmlHM
-SwlU364j77Y6I9ZbBl8QvwUsL5APwuHMJuAryWGPKqDl6K30jCyJdcThDo7Q==
------END CERTIFICATE-----"""
+    # Ottieni il certificato dalla variabile d'ambiente
+    ssl_cert_content = os.environ.get('DB_CERTIFICATE')
     
     if not ssl_cert_content:
+        print("Variabile d'ambiente DB_CERTIFICATE non trovata")
         return None
     
     try:
