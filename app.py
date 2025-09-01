@@ -25,7 +25,30 @@ def create_ssl_cert_file():
     """Crea un file temporaneo con il certificato SSL"""
     global ssl_cert_file
     
-    ssl_cert_content = os.getenv('DB_CERTIFICATE')
+    # Contenuto del certificato SSL di DigitalOcean (sostituisci con il tuo certificato)
+    ssl_cert_content = """-----BEGIN CERTIFICATE-----
+MIIDrzCCApegAwIBAgIQCDvgVpBCRrGhdWrJWZHHSjANBgkqhkiG9w0BAQUFADBh
+MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
+d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBD
+QTAeFw0wNjExMTAwMDAwMDBaFw0zMTExMTAwMDAwMDBaMGExCzAJBgNVBAYTAlVT
+MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j
+b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IENBMIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4jvhEXLeqKTTo1eqUKKPC3eQyaKl7hLOllsB
+CSDMAZOnTjC3U/dDxGkAV53ijSLdhwZAAIEJzs4bg7/fzTtxRuLWZscFs3YnFo97
+nh6Vfe63SKMI2tavegw5BmV/Sl0fvBf4q77uKNd0f3p4mVmFaG5cIzJLv07A6Fpt4
+3C/dxC//AH2hdmoRBBYMql1GNXRor5H4idq9Joz+EkIYIvUX7Q6hL+hqkpMfT7PT
+19sdl6gSzeRntwi5m3OFBqOasv+zbMUZBfHWymeMr/y7vrTC0LUq7dBMtoM1O/4g
+dW7jVg/tRvoSSiicNoxBN33shbyTApOB6jtSj1etX+jkMOvJwIDAQABo2MwYTAOBg
+NVHQ8BAf8EBAMCAYYwDwYDVR0TAQH/BAUwAwEB/zAdBgNVHQ4EFgQUA95QNVbRj
+TtmVK4mG9p6AtvMxwHwYDVR0jBBgwFoAUA95QNVbRjTtmVK4mG9p6AtvMxwDQYJ
+KoZIhvcNAQEFBQADggEBJucV9kwKt1l2ONwWwSlr4gfxCd6FomG7ynrAhacAi2V3
+XKL5hq1DdWJ6Jcp3IlV98AVI/R3E6U3U9MSlMQ5XYFwSLCfhJW9D88Y8yV2fbf4E
+1b9RqKjm7QZjT33wpm+KzD/j3vqu+3sDPXvNLtgXeOc4IufcU6iF+OJ4U7a2OPnY
+CshSNUD0MYE35L5E45U4R4Y7G35QilltCaZerjwF2yRPvEL8v3puL5tYpuM7CpI
+3JADv+up1sWwH/RpawNJSdR1NkzDKX5a/abAR/BC+F1j1ehBJUiWQKwhYhZfmlHM
+SwlU364j77Y6I9ZbBl8QvwUsL5APwuHMJuAryWGPKqDl6K30jCyJdcThDo7Q==
+-----END CERTIFICATE-----"""
+    
     if not ssl_cert_content:
         return None
     
@@ -44,31 +67,21 @@ def create_ssl_cert_file():
 
 # Configurazione del database MySQL
 def get_database_url():
-    # Se abbiamo le variabili d'ambiente per MySQL, usiamo quelle
-    if all(os.getenv(var) for var in ['DB_USERNAME', 'DB_PASSWORD', 'DB_HOST', 'DB_PORT', 'DB_NAME']):
-        username = os.getenv('DB_USERNAME')
-        password = os.getenv('DB_PASSWORD')
-        host = os.getenv('DB_HOST')
-        port = os.getenv('DB_PORT')
-        database = os.getenv('DB_NAME')
-        
-        # Se abbiamo un certificato SSL personalizzato, usiamo quello
-        if os.getenv('DB_CERTIFICATE'):
-            # Crea il file del certificato se non esiste
-            if not ssl_cert_file:
-                create_ssl_cert_file()
-            
-            if ssl_cert_file:
-                return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca={ssl_cert_file}"
-            else:
-                # Fallback al certificato di sistema se la creazione fallisce
-                return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
-        else:
-            # Fallback al certificato di sistema
-            return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca=/etc/ssl/certs/ca-certificates.crt"
+    # Configurazione diretta per MySQL
+    username = 'doadmin'
+    password = 'AVNS_q6pjJ1Aego6vWH4f1Wk'
+    host = 'db-mysql-fra1-09501-do-user-24280960-0.l.db.ondigitalocean.com'
+    port = '25060'
+    database = 'defaultdb'
+    
+    # Crea il file del certificato SSL se necessario
+    ssl_cert_path = create_ssl_cert_file()
+    
+    if ssl_cert_path:
+        return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_ca={ssl_cert_path}"
     else:
-        # Fallback a SQLite per sviluppo locale
-        return os.getenv('DATABASE_URL', 'sqlite:///tours.db')
+        # Fallback senza certificato specifico
+        return f"mysql://{username}:{password}@{host}:{port}/{database}?charset=utf8mb4&ssl_mode=REQUIRED"
 
 app.config['SQLALCHEMY_DATABASE_URI'] = get_database_url()
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -81,43 +94,45 @@ db = SQLAlchemy(app)
 
 # Modello per i tour
 class Tour(db.Model):
+    __tablename__ = 'tour'
+    
     id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
-    country = db.Column(db.String(100), nullable=False)
-    type = db.Column(db.String(50), nullable=False)  # tour, fly-drive, safari, cruise, adventure
+    titolo = db.Column(db.String(200), nullable=False)
+    paese = db.Column(db.String(100), nullable=False)
+    tipo = db.Column(db.String(50), nullable=False)  # tour, fly-drive, safari, cruise, adventure
     slug = db.Column(db.String(200), unique=True, nullable=False)
-    price = db.Column(db.Float, nullable=False)
-    duration = db.Column(db.Integer)
-    description = db.Column(db.Text)
-    mainImage = db.Column(db.String(500))
-    images = db.Column(db.Text)  # JSON string per array di immagini
-    highlights = db.Column(db.Text)  # JSON string per array di highlights
-    itinerary = db.Column(db.Text)  # JSON string per array di tappe
-    included = db.Column(db.Text)  # JSON string per servizi inclusi
-    notIncluded = db.Column(db.Text)  # JSON string per servizi non inclusi
-    notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    prezzo = db.Column(db.Float, nullable=False)
+    durata = db.Column(db.Integer)
+    descrizione = db.Column(db.Text)
+    immagine_principale = db.Column(db.String(500))
+    immagini = db.Column(db.Text)  # JSON string per array di immagini
+    punti_salienti = db.Column(db.Text)  # JSON string per array di highlights
+    itinerario = db.Column(db.Text)  # JSON string per array di tappe
+    incluso = db.Column(db.Text)  # JSON string per servizi inclusi
+    non_incluso = db.Column(db.Text)  # JSON string per servizi non inclusi
+    note = db.Column(db.Text)
+    data_creazione = db.Column(db.DateTime, default=datetime.utcnow)
+    data_aggiornamento = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
         return {
             'id': self.id,
-            'title': self.title,
-            'country': self.country,
-            'type': self.type,
+            'title': self.titolo,
+            'country': self.paese,
+            'type': self.tipo,
             'slug': self.slug,
-            'price': self.price,
-            'duration': self.duration,
-            'description': self.description,
-            'mainImage': self.mainImage,
-            'images': self.images.split(',') if self.images else [],
-            'highlights': self.highlights.split(',') if self.highlights else [],
-            'itinerary': self.itinerary.split(',') if self.itinerary else [],
-            'included': self.included.split(',') if self.included else [],
-            'notIncluded': self.notIncluded.split(',') if self.notIncluded else [],
-            'notes': self.notes,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'price': self.prezzo,
+            'duration': self.durata,
+            'description': self.descrizione,
+            'mainImage': self.immagine_principale,
+            'images': self.immagini.split(',') if self.immagini else [],
+            'highlights': self.punti_salienti.split(',') if self.punti_salienti else [],
+            'itinerary': self.itinerario.split(',') if self.itinerario else [],
+            'included': self.incluso.split(',') if self.incluso else [],
+            'notIncluded': self.non_incluso.split(',') if self.non_incluso else [],
+            'notes': self.note,
+            'created_at': self.data_creazione.isoformat() if self.data_creazione else None,
+            'updated_at': self.data_aggiornamento.isoformat() if self.data_aggiornamento else None
         }
 
 # Creazione delle tabelle
@@ -161,20 +176,20 @@ def create_tour():
         
         # Conversione degli array in stringhe per il database
         tour = Tour(
-            title=data['title'],
-            country=data['country'],
-            type=data['type'],
+            titolo=data['title'],
+            paese=data['country'],
+            tipo=data['type'],
             slug=data['slug'],
-            price=float(data['price']),
-            duration=data.get('duration'),
-            description=data.get('description'),
-            mainImage=data.get('mainImage'),
-            images=','.join(data.get('images', [])),
-            highlights=','.join(data.get('highlights', [])),
-            itinerary=','.join(data.get('itinerary', [])),
-            included=','.join(data.get('included', [])),
-            notIncluded=','.join(data.get('notIncluded', [])),
-            notes=data.get('notes')
+            prezzo=float(data['price']),
+            durata=data.get('duration'),
+            descrizione=data.get('description'),
+            immagine_principale=data.get('mainImage'),
+            immagini=','.join(data.get('images', [])),
+            punti_salienti=','.join(data.get('highlights', [])),
+            itinerario=','.join(data.get('itinerary', [])),
+            incluso=','.join(data.get('included', [])),
+            non_incluso=','.join(data.get('notIncluded', [])),
+            note=data.get('notes')
         )
         
         db.session.add(tour)
@@ -204,21 +219,21 @@ def update_tour(tour_id):
             return jsonify({'error': 'Slug già esistente'}), 400
         
         # Aggiornamento dei campi
-        tour.title = data['title']
-        tour.country = data['country']
-        tour.type = data['type']
+        tour.titolo = data['title']
+        tour.paese = data['country']
+        tour.tipo = data['type']
         tour.slug = data['slug']
-        tour.price = float(data['price'])
-        tour.duration = data.get('duration')
-        tour.description = data.get('description')
-        tour.mainImage = data.get('mainImage')
-        tour.images = ','.join(data.get('images', []))
-        tour.highlights = ','.join(data.get('highlights', []))
-        tour.itinerary = ','.join(data.get('itinerary', []))
-        tour.included = ','.join(data.get('included', []))
-        tour.notIncluded = ','.join(data.get('notIncluded', []))
-        tour.notes = data.get('notes')
-        tour.updated_at = datetime.utcnow()
+        tour.prezzo = float(data['price'])
+        tour.durata = data.get('duration')
+        tour.descrizione = data.get('description')
+        tour.immagine_principale = data.get('mainImage')
+        tour.immagini = ','.join(data.get('images', []))
+        tour.punti_salienti = ','.join(data.get('highlights', []))
+        tour.itinerario = ','.join(data.get('itinerary', []))
+        tour.incluso = ','.join(data.get('included', []))
+        tour.non_incluso = ','.join(data.get('notIncluded', []))
+        tour.note = data.get('notes')
+        tour.data_aggiornamento = datetime.utcnow()
         
         db.session.commit()
         
@@ -243,7 +258,7 @@ def delete_tour(tour_id):
 @app.route('/api/tours/country/<country>', methods=['GET'])
 def get_tours_by_country(country):
     try:
-        tours = Tour.query.filter_by(country=country).all()
+        tours = Tour.query.filter_by(paese=country).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -252,7 +267,7 @@ def get_tours_by_country(country):
 @app.route('/api/tours/type/<tour_type>', methods=['GET'])
 def get_tours_by_type(tour_type):
     try:
-        tours = Tour.query.filter_by(type=tour_type).all()
+        tours = Tour.query.filter_by(tipo=tour_type).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
