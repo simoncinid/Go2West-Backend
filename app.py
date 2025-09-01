@@ -79,7 +79,7 @@ class Tour(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     titolo = db.Column(db.String(200), nullable=False)
     paese = db.Column(db.String(100), nullable=False)
-    tipo = db.Column(db.String(50), nullable=False)  # tour, fly-drive, safari, cruise, adventure
+    tipo = db.Column(db.String(50), nullable=False)  # tour, fly-drive, safari, cruise, adventure, motorcycle
     slug = db.Column(db.String(200), unique=True, nullable=False)
     prezzo = db.Column(db.Float, nullable=False)
     durata = db.Column(db.Integer)
@@ -234,11 +234,27 @@ def delete_tour(tour_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
+# Mapping dei parametri URL ai nomi dei paesi nel database
+COUNTRY_MAPPING = {
+    'usa': 'Stati Uniti',
+    'messico': 'Messico',
+    'polinesia-francese': 'Polinesia Francese',
+    'kenya': 'Kenya',
+    'australia': 'Australia',
+    'argentina': 'Argentina',
+    'giappone': 'Giappone'
+}
+
+def get_country_from_param(country_param):
+    """Converte il parametro URL del paese nel nome del database"""
+    return COUNTRY_MAPPING.get(country_param, country_param)
+
 # Route per ottenere tour per paese
 @app.route('/api/tours/country/<country>', methods=['GET'])
 def get_tours_by_country(country):
     try:
-        tours = Tour.query.filter_by(paese=country).all()
+        country_name = get_country_from_param(country)
+        tours = Tour.query.filter_by(paese=country_name).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -248,6 +264,16 @@ def get_tours_by_country(country):
 def get_tours_by_type(tour_type):
     try:
         tours = Tour.query.filter_by(tipo=tour_type).all()
+        return jsonify([tour.to_dict() for tour in tours])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Route per ottenere tour per paese e tipo
+@app.route('/api/tours/country/<country>/type/<tour_type>', methods=['GET'])
+def get_tours_by_country_and_type(country, tour_type):
+    try:
+        country_name = get_country_from_param(country)
+        tours = Tour.query.filter_by(paese=country_name, tipo=tour_type).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -280,6 +306,7 @@ def index():
             'tour_by_id': '/api/tours/<id>',
             'tours_by_country': '/api/tours/country/<country>',
             'tours_by_type': '/api/tours/type/<type>',
+            'tours_by_country_and_type': '/api/tours/country/<country>/type/<type>',
             'tour_by_slug': '/api/tours/slug/<slug>',
             'health': '/health'
         }
