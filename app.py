@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
@@ -6,6 +6,9 @@ import os
 import tempfile
 from dotenv import load_dotenv
 import pymysql
+import base64
+import io
+from PIL import Image
 
 # Registra PyMySQL come driver MySQL
 pymysql.install_as_MySQLdb()
@@ -74,45 +77,61 @@ db = SQLAlchemy(app)
 
 # Modello per i tour
 class Tour(db.Model):
-    __tablename__ = 'tour'
+    __tablename__ = 'tours'
     
     id = db.Column(db.Integer, primary_key=True)
-    titolo = db.Column(db.String(200), nullable=False)
-    paese = db.Column(db.String(100), nullable=False)
-    tipo = db.Column(db.String(50), nullable=False)  # tour, fly-drive, safari, cruise, adventure, motorcycle
-    slug = db.Column(db.String(200), unique=True, nullable=False)
-    prezzo = db.Column(db.Float, nullable=False)
-    durata = db.Column(db.Integer)
-    descrizione = db.Column(db.Text)
-    immagine_principale = db.Column(db.String(500))
-    immagini = db.Column(db.Text)  # JSON string per array di immagini
-    punti_salienti = db.Column(db.Text)  # JSON string per array di highlights
-    itinerario = db.Column(db.Text)  # JSON string per array di tappe
-    incluso = db.Column(db.Text)  # JSON string per servizi inclusi
-    non_incluso = db.Column(db.Text)  # JSON string per servizi non inclusi
-    note = db.Column(db.Text)
-    data_creazione = db.Column(db.DateTime, default=datetime.utcnow)
-    data_aggiornamento = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    code = db.Column(db.String(200), unique=True, nullable=False)
+    heroImage = db.Column(db.LargeBinary)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    carouselImage1 = db.Column(db.LargeBinary)
+    carouselImage2 = db.Column(db.LargeBinary)
+    carouselImage3 = db.Column(db.LargeBinary)
+    program = db.Column(db.JSON)
+    image1 = db.Column(db.LargeBinary)
+    image2 = db.Column(db.LargeBinary)
+    image3 = db.Column(db.LargeBinary)
+    image4 = db.Column(db.LargeBinary)
+    image5 = db.Column(db.LargeBinary)
+    prices = db.Column(db.JSON)
+    included = db.Column(db.JSON)
+    notIncluded = db.Column(db.JSON)
+    duration = db.Column(db.Integer)
+    type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra'), nullable=False)
+    destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
+    notes = db.Column(db.Text)
+    dates = db.Column(db.JSON)
+    minPrice = db.Column(db.Decimal(10, 2))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
         return {
             'id': self.id,
-            'title': self.titolo,
-            'country': self.paese,
-            'type': self.tipo,
-            'slug': self.slug,
-            'price': self.prezzo,
-            'duration': self.durata,
-            'description': self.descrizione,
-            'mainImage': self.immagine_principale,
-            'images': self.immagini.split(',') if self.immagini else [],
-            'highlights': self.punti_salienti.split(',') if self.punti_salienti else [],
-            'itinerary': self.itinerario.split(',') if self.itinerario else [],
-            'included': self.incluso.split(',') if self.incluso else [],
-            'notIncluded': self.non_incluso.split(',') if self.non_incluso else [],
-            'notes': self.note,
-            'created_at': self.data_creazione.isoformat() if self.data_creazione else None,
-            'updated_at': self.data_aggiornamento.isoformat() if self.data_aggiornamento else None
+            'code': self.code,
+            'heroImage': bool(self.heroImage),
+            'title': self.title,
+            'description': self.description,
+            'carouselImage1': bool(self.carouselImage1),
+            'carouselImage2': bool(self.carouselImage2),
+            'carouselImage3': bool(self.carouselImage3),
+            'program': self.program,
+            'image1': bool(self.image1),
+            'image2': bool(self.image2),
+            'image3': bool(self.image3),
+            'image4': bool(self.image4),
+            'image5': bool(self.image5),
+            'prices': self.prices,
+            'included': self.included,
+            'notIncluded': self.notIncluded,
+            'duration': self.duration,
+            'type': self.type,
+            'destination': self.destination,
+            'notes': self.notes,
+            'dates': self.dates,
+            'minPrice': float(self.minPrice) if self.minPrice else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
 # Creazione delle tabelle
@@ -144,32 +163,36 @@ def create_tour():
         data = request.get_json()
         
         # Validazione dei dati richiesti
-        required_fields = ['title', 'country', 'type', 'slug', 'price']
+        required_fields = ['title', 'type', 'destination']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'Campo {field} è richiesto'}), 400
         
-        # Controllo se lo slug esiste già
-        existing_tour = Tour.query.filter_by(slug=data['slug']).first()
-        if existing_tour:
-            return jsonify({'error': 'Slug già esistente'}), 400
+        # Genera il code automaticamente se non fornito
+        code = data.get('code')
+        if not code:
+            code = data['title'].lower().replace(' ', '-').replace('à', 'a').replace('è', 'e').replace('é', 'e').replace('ì', 'i').replace('ò', 'o').replace('ù', 'u')
         
-        # Conversione degli array in stringhe per il database
+        # Controllo se il code esiste già
+        existing_tour = Tour.query.filter_by(code=code).first()
+        if existing_tour:
+            return jsonify({'error': 'Code già esistente'}), 400
+        
+        # Creazione del tour con la nuova struttura (senza immagini, caricate separatamente)
         tour = Tour(
-            titolo=data['title'],
-            paese=data['country'],
-            tipo=data['type'],
-            slug=data['slug'],
-            prezzo=float(data['price']),
-            durata=data.get('duration'),
-            descrizione=data.get('description'),
-            immagine_principale=data.get('mainImage'),
-            immagini=','.join(data.get('images', [])),
-            punti_salienti=','.join(data.get('highlights', [])),
-            itinerario=','.join(data.get('itinerary', [])),
-            incluso=','.join(data.get('included', [])),
-            non_incluso=','.join(data.get('notIncluded', [])),
-            note=data.get('notes')
+            code=code,
+            title=data['title'],
+            description=data.get('description'),
+            program=data.get('program'),
+            prices=data.get('prices'),
+            included=data.get('included'),
+            notIncluded=data.get('notIncluded'),
+            duration=data.get('duration'),
+            type=data['type'],
+            destination=data['destination'],
+            notes=data.get('notes'),
+            dates=data.get('dates'),
+            minPrice=data.get('minPrice')
         )
         
         db.session.add(tour)
@@ -188,32 +211,36 @@ def update_tour(tour_id):
         data = request.get_json()
         
         # Validazione dei dati richiesti
-        required_fields = ['title', 'country', 'type', 'slug', 'price']
+        required_fields = ['title', 'type', 'destination']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'error': f'Campo {field} è richiesto'}), 400
         
-        # Controllo se lo slug esiste già (escludendo il tour corrente)
-        existing_tour = Tour.query.filter_by(slug=data['slug']).first()
-        if existing_tour and existing_tour.id != tour_id:
-            return jsonify({'error': 'Slug già esistente'}), 400
+        # Genera il code automaticamente se non fornito
+        code = data.get('code')
+        if not code:
+            code = data['title'].lower().replace(' ', '-').replace('à', 'a').replace('è', 'e').replace('é', 'e').replace('ì', 'i').replace('ò', 'o').replace('ù', 'u')
         
-        # Aggiornamento dei campi
-        tour.titolo = data['title']
-        tour.paese = data['country']
-        tour.tipo = data['type']
-        tour.slug = data['slug']
-        tour.prezzo = float(data['price'])
-        tour.durata = data.get('duration')
-        tour.descrizione = data.get('description')
-        tour.immagine_principale = data.get('mainImage')
-        tour.immagini = ','.join(data.get('images', []))
-        tour.punti_salienti = ','.join(data.get('highlights', []))
-        tour.itinerario = ','.join(data.get('itinerary', []))
-        tour.incluso = ','.join(data.get('included', []))
-        tour.non_incluso = ','.join(data.get('notIncluded', []))
-        tour.note = data.get('notes')
-        tour.data_aggiornamento = datetime.utcnow()
+        # Controllo se il code esiste già (escludendo il tour corrente)
+        existing_tour = Tour.query.filter_by(code=code).first()
+        if existing_tour and existing_tour.id != tour_id:
+            return jsonify({'error': 'Code già esistente'}), 400
+        
+        # Aggiornamento dei campi (senza immagini, caricate separatamente)
+        tour.code = code
+        tour.title = data['title']
+        tour.description = data.get('description')
+        tour.program = data.get('program')
+        tour.prices = data.get('prices')
+        tour.included = data.get('included')
+        tour.notIncluded = data.get('notIncluded')
+        tour.duration = data.get('duration')
+        tour.type = data['type']
+        tour.destination = data['destination']
+        tour.notes = data.get('notes')
+        tour.dates = data.get('dates')
+        tour.minPrice = data.get('minPrice')
+        tour.updated_at = datetime.utcnow()
         
         db.session.commit()
         
@@ -234,27 +261,11 @@ def delete_tour(tour_id):
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-# Mapping dei parametri URL ai nomi dei paesi nel database
-COUNTRY_MAPPING = {
-    'usa': 'Stati Uniti',
-    'messico': 'Messico',
-    'polinesia-francese': 'Polinesia Francese',
-    'kenya': 'Kenya',
-    'australia': 'Australia',
-    'argentina': 'Argentina',
-    'giappone': 'Giappone'
-}
-
-def get_country_from_param(country_param):
-    """Converte il parametro URL del paese nel nome del database"""
-    return COUNTRY_MAPPING.get(country_param, country_param)
-
-# Route per ottenere tour per paese
-@app.route('/api/tours/country/<country>', methods=['GET'])
-def get_tours_by_country(country):
+# Route per ottenere tour per destinazione
+@app.route('/api/tours/destination/<destination>', methods=['GET'])
+def get_tours_by_destination(destination):
     try:
-        country_name = get_country_from_param(country)
-        tours = Tour.query.filter_by(paese=country_name).all()
+        tours = Tour.query.filter_by(destination=destination).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -263,31 +274,130 @@ def get_tours_by_country(country):
 @app.route('/api/tours/type/<tour_type>', methods=['GET'])
 def get_tours_by_type(tour_type):
     try:
-        tours = Tour.query.filter_by(tipo=tour_type).all()
+        tours = Tour.query.filter_by(type=tour_type).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Route per ottenere tour per paese e tipo
-@app.route('/api/tours/country/<country>/type/<tour_type>', methods=['GET'])
-def get_tours_by_country_and_type(country, tour_type):
+# Route per ottenere tour per destinazione e tipo
+@app.route('/api/tours/destination/<destination>/type/<tour_type>', methods=['GET'])
+def get_tours_by_destination_and_type(destination, tour_type):
     try:
-        country_name = get_country_from_param(country)
-        tours = Tour.query.filter_by(paese=country_name, tipo=tour_type).all()
+        tours = Tour.query.filter_by(destination=destination, type=tour_type).all()
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# Route per ottenere tour per slug
-@app.route('/api/tours/slug/<slug>', methods=['GET'])
-def get_tour_by_slug(slug):
+# Route per ottenere tour per code
+@app.route('/api/tours/code/<code>', methods=['GET'])
+def get_tour_by_code(code):
     try:
-        tour = Tour.query.filter_by(slug=slug).first()
+        tour = Tour.query.filter_by(code=code).first()
         if tour:
             return jsonify(tour.to_dict())
         else:
             return jsonify({'error': 'Tour non trovato'}), 404
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Route per servire le immagini
+@app.route('/api/tours/<int:tour_id>/image/<image_type>', methods=['GET'])
+def get_tour_image(tour_id, image_type):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        # Mappa i tipi di immagine ai campi del modello
+        image_fields = {
+            'hero': tour.heroImage,
+            'carousel1': tour.carouselImage1,
+            'carousel2': tour.carouselImage2,
+            'carousel3': tour.carouselImage3,
+            'image1': tour.image1,
+            'image2': tour.image2,
+            'image3': tour.image3,
+            'image4': tour.image4,
+            'image5': tour.image5
+        }
+        
+        if image_type not in image_fields:
+            return jsonify({'error': 'Tipo di immagine non valido'}), 400
+        
+        image_data = image_fields[image_type]
+        
+        if not image_data:
+            return jsonify({'error': 'Immagine non trovata'}), 404
+        
+        # Determina il tipo MIME basato sui primi byte
+        if image_data.startswith(b'\xff\xd8\xff'):
+            mimetype = 'image/jpeg'
+        elif image_data.startswith(b'\x89PNG'):
+            mimetype = 'image/png'
+        elif image_data.startswith(b'GIF'):
+            mimetype = 'image/gif'
+        elif image_data.startswith(b'RIFF') and b'WEBP' in image_data[:12]:
+            mimetype = 'image/webp'
+        else:
+            mimetype = 'image/jpeg'  # Default
+        
+        return Response(image_data, mimetype=mimetype)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Route per caricare un'immagine
+@app.route('/api/tours/<int:tour_id>/image/<image_type>', methods=['POST'])
+def upload_tour_image(tour_id, image_type):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        # Verifica che ci sia un file nell'upload
+        if 'image' not in request.files:
+            return jsonify({'error': 'Nessun file immagine fornito'}), 400
+        
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'error': 'Nessun file selezionato'}), 400
+        
+        # Leggi i dati del file
+        image_data = file.read()
+        
+        # Opzionale: ridimensiona l'immagine per ottimizzare lo spazio
+        try:
+            img = Image.open(io.BytesIO(image_data))
+            # Ridimensiona se l'immagine è troppo grande (es. max 1920x1080)
+            if img.width > 1920 or img.height > 1080:
+                img.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                img.save(output, format='JPEG', quality=85, optimize=True)
+                image_data = output.getvalue()
+        except Exception as e:
+            # Se non riesce a processare l'immagine, usa i dati originali
+            pass
+        
+        # Mappa i tipi di immagine ai campi del modello
+        image_fields = {
+            'hero': 'heroImage',
+            'carousel1': 'carouselImage1',
+            'carousel2': 'carouselImage2',
+            'carousel3': 'carouselImage3',
+            'image1': 'image1',
+            'image2': 'image2',
+            'image3': 'image3',
+            'image4': 'image4',
+            'image5': 'image5'
+        }
+        
+        if image_type not in image_fields:
+            return jsonify({'error': 'Tipo di immagine non valido'}), 400
+        
+        # Aggiorna il campo dell'immagine
+        setattr(tour, image_fields[image_type], image_data)
+        tour.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        return jsonify({'message': f'Immagine {image_type} caricata con successo'})
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 # Route di health check per Render
@@ -300,16 +410,21 @@ def health_check():
 def index():
     return jsonify({
         'message': 'Go2West API',
-        'version': '1.0.0',
+        'version': '2.0.0',
         'endpoints': {
             'tours': '/api/tours',
             'tour_by_id': '/api/tours/<id>',
-            'tours_by_country': '/api/tours/country/<country>',
+            'tours_by_destination': '/api/tours/destination/<destination>',
             'tours_by_type': '/api/tours/type/<type>',
-            'tours_by_country_and_type': '/api/tours/country/<country>/type/<type>',
-            'tour_by_slug': '/api/tours/slug/<slug>',
+            'tours_by_destination_and_type': '/api/tours/destination/<destination>/type/<type>',
+            'tour_by_code': '/api/tours/code/<code>',
+            'get_image': '/api/tours/<id>/image/<image_type>',
+            'upload_image': '/api/tours/<id>/image/<image_type>',
             'health': '/health'
-        }
+        },
+        'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
+        'types': ['city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra'],
+        'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5']
     })
 
 if __name__ == '__main__':
