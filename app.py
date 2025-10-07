@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 import pymysql
 import base64
 import io
-from PIL import Image
 
 # Registra PyMySQL come driver MySQL
 pymysql.install_as_MySQLdb()
@@ -101,7 +100,7 @@ class Tour(db.Model):
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
-    minPrice = db.Column(db.Decimal(10, 2))
+    minPrice = db.Column(db.Numeric(10, 2))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -360,18 +359,8 @@ def upload_tour_image(tour_id, image_type):
         # Leggi i dati del file
         image_data = file.read()
         
-        # Opzionale: ridimensiona l'immagine per ottimizzare lo spazio
-        try:
-            img = Image.open(io.BytesIO(image_data))
-            # Ridimensiona se l'immagine è troppo grande (es. max 1920x1080)
-            if img.width > 1920 or img.height > 1080:
-                img.thumbnail((1920, 1080), Image.Resampling.LANCZOS)
-                output = io.BytesIO()
-                img.save(output, format='JPEG', quality=85, optimize=True)
-                image_data = output.getvalue()
-        except Exception as e:
-            # Se non riesce a processare l'immagine, usa i dati originali
-            pass
+        # Le immagini vengono salvate così come sono (senza ridimensionamento)
+        # TODO: Aggiungere ridimensionamento quando Pillow sarà disponibile
         
         # Mappa i tipi di immagine ai campi del modello
         image_fields = {
