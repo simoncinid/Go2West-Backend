@@ -101,6 +101,8 @@ class Tour(db.Model):
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
     minPrice = db.Column(db.Numeric(10, 2))
+    pasti = db.Column(db.Text)
+    itinerario = db.Column(db.Text)
     is_promotion = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -130,6 +132,8 @@ class Tour(db.Model):
             'notes': self.notes,
             'dates': self.dates,
             'minPrice': float(self.minPrice) if self.minPrice else None,
+            'pasti': self.pasti,
+            'itinerario': self.itinerario,
             'isPromotion': self.is_promotion,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -203,6 +207,8 @@ def create_tour():
             notes=data.get('notes'),
             dates=data.get('dates'),
             minPrice=data.get('minPrice'),
+            pasti=data.get('pasti'),
+            itinerario=data.get('itinerario'),
             is_promotion=data.get('isPromotion', False)
         )
         
@@ -251,6 +257,8 @@ def update_tour(tour_id):
         tour.notes = data.get('notes')
         tour.dates = data.get('dates')
         tour.minPrice = data.get('minPrice')
+        tour.pasti = data.get('pasti')
+        tour.itinerario = data.get('itinerario')
         tour.is_promotion = data.get('isPromotion', False)
         tour.updated_at = datetime.utcnow()
         
