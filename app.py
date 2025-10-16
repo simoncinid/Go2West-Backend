@@ -101,6 +101,7 @@ class Tour(db.Model):
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
     minPrice = db.Column(db.Numeric(10, 2))
+    is_promotion = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -129,6 +130,7 @@ class Tour(db.Model):
             'notes': self.notes,
             'dates': self.dates,
             'minPrice': float(self.minPrice) if self.minPrice else None,
+            'isPromotion': self.is_promotion,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
@@ -141,7 +143,16 @@ with app.app_context():
 @app.route('/api/tours', methods=['GET'])
 def get_tours():
     try:
-        tours = Tour.query.all()
+        # Controlla se è richiesto il filtro per le promozioni
+        promotion_filter = request.args.get('promotion')
+        
+        if promotion_filter and promotion_filter.lower() == 'true':
+            # Restituisci solo i tour in promozione
+            tours = Tour.query.filter_by(is_promotion=True).all()
+        else:
+            # Restituisci tutti i tour
+            tours = Tour.query.all()
+            
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -191,7 +202,8 @@ def create_tour():
             destination=data['destination'],
             notes=data.get('notes'),
             dates=data.get('dates'),
-            minPrice=data.get('minPrice')
+            minPrice=data.get('minPrice'),
+            is_promotion=data.get('isPromotion', False)
         )
         
         db.session.add(tour)
@@ -239,6 +251,7 @@ def update_tour(tour_id):
         tour.notes = data.get('notes')
         tour.dates = data.get('dates')
         tour.minPrice = data.get('minPrice')
+        tour.is_promotion = data.get('isPromotion', False)
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
@@ -297,6 +310,30 @@ def get_tour_by_code(code):
         else:
             return jsonify({'error': 'Tour non trovato'}), 404
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Route per aggiornare solo lo stato promozione di un tour
+@app.route('/api/tours/<int:tour_id>/promotion', methods=['PUT'])
+def update_tour_promotion(tour_id):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        data = request.get_json()
+        
+        # Aggiorna solo il campo is_promotion
+        if 'isPromotion' in data:
+            tour.is_promotion = bool(data['isPromotion'])
+            tour.updated_at = datetime.utcnow()
+            db.session.commit()
+            
+            return jsonify({
+                'message': 'Stato promozione aggiornato con successo',
+                'tour': tour.to_dict()
+            })
+        else:
+            return jsonify({'error': 'Campo isPromotion richiesto'}), 400
+            
+    except Exception as e:
+        db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
 # Route per servire le immagini
@@ -402,11 +439,13 @@ def index():
         'version': '2.0.0',
         'endpoints': {
             'tours': '/api/tours',
+            'tours_promotions': '/api/tours?promotion=true',
             'tour_by_id': '/api/tours/<id>',
             'tours_by_destination': '/api/tours/destination/<destination>',
             'tours_by_type': '/api/tours/type/<type>',
             'tours_by_destination_and_type': '/api/tours/destination/<destination>/type/<type>',
             'tour_by_code': '/api/tours/code/<code>',
+            'update_promotion': '/api/tours/<id>/promotion',
             'get_image': '/api/tours/<id>/image/<image_type>',
             'upload_image': '/api/tours/<id>/image/<image_type>',
             'health': '/health'
