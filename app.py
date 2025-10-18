@@ -291,6 +291,25 @@ def create_tour_file_in_vector_store(tour):
         }
     
     try:
+        # PRIMA: Rimuovi il file vecchio se esiste (senza eliminare il record dal database)
+        existing_tour_file = TourFile.query.filter_by(tour_id=tour.id).first()
+        if existing_tour_file and existing_tour_file.vector_store_file_id:
+            try:
+                # Rimuovi il file dal vector store
+                openai_client.beta.vector_stores.files.delete(
+                    vector_store_id=VECTOR_STORE_ID,
+                    file_id=existing_tour_file.vector_store_file_id
+                )
+                
+                # Elimina anche il file da OpenAI
+                openai_client.files.delete(existing_tour_file.vector_store_file_id)
+                
+                print(f"✅ Rimosso file vecchio dal vector store per tour {tour.id}")
+                
+            except Exception as e:
+                print(f"⚠️ Errore nella rimozione del file vecchio per tour {tour.id}: {e}")
+                # Continua comunque con la creazione del nuovo file
+        
         # Genera il contenuto del file
         content = generate_tour_txt_content(tour)
         
@@ -303,26 +322,25 @@ def create_tour_file_in_vector_store(tour):
             temp_file_path = temp_file.name
         
         try:
-            # Carica il file nel vector store
+            # Carica il nuovo file nel vector store
             with open(temp_file_path, 'rb') as file_to_upload:
                 vector_file = openai_client.files.create(
                     file=file_to_upload,
                     purpose='assistants'
                 )
             
-            # Aggiungi il file al vector store
+            # Aggiungi il nuovo file al vector store
             openai_client.beta.vector_stores.files.create(
                 vector_store_id=VECTOR_STORE_ID,
                 file_id=vector_file.id
             )
             
             # Salva nel database
-            tour_file = TourFile.query.filter_by(tour_id=tour.id).first()
-            if tour_file:
-                # Aggiorna il record esistente
-                tour_file.filename = filename
-                tour_file.vector_store_file_id = vector_file.id
-                tour_file.updated_at = datetime.utcnow()
+            if existing_tour_file:
+                # Aggiorna il record esistente con il nuovo file ID
+                existing_tour_file.filename = filename
+                existing_tour_file.vector_store_file_id = vector_file.id
+                existing_tour_file.updated_at = datetime.utcnow()
             else:
                 # Crea un nuovo record
                 tour_file = TourFile(
