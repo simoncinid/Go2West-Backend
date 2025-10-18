@@ -96,8 +96,9 @@ except Exception as e:
     openai_client = None
     CHATBOT_ENABLED = False
 
-# ID del vector store
+# ID del vector store e assistant
 VECTOR_STORE_ID = "vs_68f350c542d88191a4026139f8bae406"
+ASSISTANT_ID = "asst_cxykjx2GVPkdYqmHXhRrD6D5"
 
 # Modello per i tour
 class Tour(db.Model):
@@ -719,32 +720,8 @@ def chat_with_ai():
         if not user_message:
             return jsonify({'error': 'Messaggio richiesto'}), 400
         
-        # Crea un assistant temporaneo per questa conversazione
-        assistant = openai_client.beta.assistants.create(
-            name="Go2West Travel Assistant",
-            instructions="""Sei un assistente virtuale specializzato nei viaggi di Go2West, un'agenzia di viaggi italiana che organizza tour negli Stati Uniti, Canada, Messico, America Centrale, Sud America, Caraibi e Polinesia Francese.
-
-Il tuo compito è aiutare i clienti fornendo informazioni dettagliate sui tour disponibili, prezzi, itinerari, date, inclusi/esclusi e tutto ciò che riguarda i viaggi.
-
-Rispondi sempre in italiano in modo professionale, cordiale e informativo. Se non hai informazioni specifiche su un tour, suggerisci di contattare l'agenzia per maggiori dettagli.
-
-Puoi aiutare con:
-- Informazioni sui tour disponibili
-- Prezzi e date
-- Itinerari dettagliati
-- Cosa è incluso/escluso nei tour
-- Consigli su destinazioni
-- Tipologie di viaggio (city breaks, fly & drive, tour guidati, etc.)
-
-Mantieni sempre un tono professionale ma amichevole, come un consulente di viaggio esperto.""",
-            model="gpt-4o",
-            tools=[{"type": "file_search"}],
-            tool_resources={
-                "file_search": {
-                    "vector_store_ids": [VECTOR_STORE_ID]
-                }
-            }
-        )
+        # Utilizza l'assistant esistente
+        assistant_id = ASSISTANT_ID
         
         # Crea un thread per la conversazione
         thread = openai_client.beta.threads.create()
@@ -759,7 +736,7 @@ Mantieni sempre un tono professionale ma amichevole, come un consulente di viagg
         # Esegui l'assistant
         run = openai_client.beta.threads.runs.create(
             thread_id=thread.id,
-            assistant_id=assistant.id
+            assistant_id=assistant_id
         )
         
         # Attendi il completamento
@@ -783,17 +760,11 @@ Mantieni sempre un tono professionale ma amichevole, come un consulente di viagg
                     assistant_message = message.content[0].text.value
                     break
             
-            # Pulisci le risorse
-            openai_client.beta.assistants.delete(assistant.id)
-            
             return jsonify({
                 'response': assistant_message,
                 'status': 'success'
             })
         else:
-            # Pulisci le risorse in caso di errore
-            openai_client.beta.assistants.delete(assistant.id)
-            
             return jsonify({
                 'error': f'Errore nell\'elaborazione: {run.status}',
                 'status': 'error'
