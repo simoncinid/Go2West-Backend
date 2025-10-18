@@ -77,8 +77,24 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
-# Inizializza OpenAI client
-openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+# Inizializza OpenAI client con gestione errori
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+openai_client = None
+CHATBOT_ENABLED = False
+
+try:
+    if OPENAI_API_KEY:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        CHATBOT_ENABLED = True
+        print("✅ OpenAI client inizializzato correttamente")
+    else:
+        print("⚠️ OPENAI_API_KEY non trovata. Funzionalità chatbot disabilitate.")
+        print("   Per abilitare il chatbot, configura la variabile d'ambiente OPENAI_API_KEY su Render.")
+except Exception as e:
+    print(f"❌ Errore nell'inizializzazione OpenAI client: {e}")
+    print("   Il server continuerà a funzionare senza le funzionalità del chatbot.")
+    openai_client = None
+    CHATBOT_ENABLED = False
 
 # ID del vector store
 VECTOR_STORE_ID = "vs_68f350c542d88191a4026139f8bae406"
@@ -267,6 +283,12 @@ DESCRIZIONE:
 
 def create_tour_file_in_vector_store(tour):
     """Crea un file .txt nel vector store per un tour"""
+    if not CHATBOT_ENABLED or not openai_client:
+        return {
+            'success': False,
+            'error': 'Chatbot non abilitato - OPENAI_API_KEY mancante'
+        }
+    
     try:
         # Genera il contenuto del file
         content = generate_tour_txt_content(tour)
@@ -330,6 +352,12 @@ def create_tour_file_in_vector_store(tour):
 
 def delete_tour_file_from_vector_store(tour_id):
     """Elimina un file dal vector store"""
+    if not CHATBOT_ENABLED or not openai_client:
+        return {
+            'success': False,
+            'error': 'Chatbot non abilitato - OPENAI_API_KEY mancante'
+        }
+    
     try:
         # Trova il record nel database
         tour_file = TourFile.query.filter_by(tour_id=tour_id).first()
@@ -678,6 +706,12 @@ def upload_tour_image(tour_id, image_type):
 # Route per il chatbot AI
 @app.route('/api/chat', methods=['POST'])
 def chat_with_ai():
+    if not CHATBOT_ENABLED or not openai_client:
+        return jsonify({
+            'error': 'Chatbot non disponibile. Contatta direttamente l\'agenzia per informazioni sui tour.',
+            'status': 'error'
+        }), 503
+    
     try:
         data = request.get_json()
         user_message = data.get('message', '')
@@ -772,6 +806,12 @@ Mantieni sempre un tono professionale ma amichevole, come un consulente di viagg
 # Route per sincronizzare tutti i tour esistenti con il vector store
 @app.route('/api/sync-vector-store', methods=['POST'])
 def sync_vector_store():
+    if not CHATBOT_ENABLED or not openai_client:
+        return jsonify({
+            'error': 'Chatbot non abilitato - OPENAI_API_KEY mancante',
+            'status': 'error'
+        }), 503
+    
     try:
         tours = Tour.query.all()
         success_count = 0
