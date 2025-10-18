@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 import pymysql
 import base64
 import io
+from openai import OpenAI
+import json
+import re
 
 # Registra PyMySQL come driver MySQL
 pymysql.install_as_MySQLdb()
@@ -74,6 +77,12 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
+# Inizializza OpenAI client
+openai_client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+
+# ID del vector store
+VECTOR_STORE_ID = "vs_68f350c542d88191a4026139f8bae406"
+
 # Modello per i tour
 class Tour(db.Model):
     __tablename__ = 'tours'
@@ -137,6 +146,222 @@ class Tour(db.Model):
             'isPromotion': self.is_promotion,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+# Modello per i file dei tour nel vector store
+class TourFile(db.Model):
+    __tablename__ = 'tour_files'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    tour_id = db.Column(db.Integer, db.ForeignKey('tours.id', ondelete='CASCADE'), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    vector_store_file_id = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relazione con Tour
+    tour = db.relationship('Tour', backref=db.backref('tour_file', uselist=False, cascade='all, delete-orphan'))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'tour_id': self.tour_id,
+            'filename': self.filename,
+            'vector_store_file_id': self.vector_store_file_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+
+# Funzioni per la gestione del vector store e file .txt
+
+def generate_tour_txt_content(tour):
+    """Genera il contenuto del file .txt per un tour"""
+    content = f"""TOUR: {tour.title}
+CODICE: {tour.code}
+DESTINAZIONE: {tour.destination}
+TIPO DI VIAGGIO: {tour.type}
+DURATA: {tour.duration} giorni
+PREZZO MINIMO: €{tour.minPrice if tour.minPrice else 'Da definire'}
+
+DESCRIZIONE:
+{tour.description or 'Nessuna descrizione disponibile'}
+
+"""
+
+    # Programma
+    if tour.program:
+        content += "PROGRAMMA DI VIAGGIO:\n"
+        if isinstance(tour.program, list):
+            for i, day in enumerate(tour.program, 1):
+                if isinstance(day, dict):
+                    content += f"Giorno {i}: {day.get('title', '')}\n"
+                    content += f"{day.get('description', '')}\n\n"
+                else:
+                    content += f"Giorno {i}: {day}\n\n"
+        else:
+            content += f"{tour.program}\n\n"
+
+    # Itinerario
+    if tour.itinerario:
+        content += f"ITINERARIO:\n{tour.itinerario}\n\n"
+
+    # Prezzi
+    if tour.prices:
+        content += "PREZZI:\n"
+        if isinstance(tour.prices, list):
+            for price in tour.prices:
+                if isinstance(price, dict):
+                    content += f"- {price.get('category', '')}: €{price.get('price', '')}\n"
+                else:
+                    content += f"- {price}\n"
+        else:
+            content += f"{tour.prices}\n"
+        content += "\n"
+
+    # Incluso
+    if tour.included:
+        content += "INCLUSO NEL PREZZO:\n"
+        if isinstance(tour.included, list):
+            for item in tour.included:
+                content += f"- {item}\n"
+        else:
+            content += f"{tour.included}\n"
+        content += "\n"
+
+    # Non incluso
+    if tour.notIncluded:
+        content += "NON INCLUSO NEL PREZZO:\n"
+        if isinstance(tour.notIncluded, list):
+            for item in tour.notIncluded:
+                content += f"- {item}\n"
+        else:
+            content += f"{tour.notIncluded}\n"
+        content += "\n"
+
+    # Pasti
+    if tour.pasti:
+        content += f"PASTI:\n{tour.pasti}\n\n"
+
+    # Date disponibili
+    if tour.dates:
+        content += "DATE DISPONIBILI:\n"
+        if isinstance(tour.dates, list):
+            for date in tour.dates:
+                content += f"- {date}\n"
+        else:
+            content += f"{tour.dates}\n"
+        content += "\n"
+
+    # Note
+    if tour.notes:
+        content += f"NOTE AGGIUNTIVE:\n{tour.notes}\n\n"
+
+    # Stato promozione
+    if tour.is_promotion:
+        content += "QUESTO TOUR È ATTUALMENTE IN PROMOZIONE!\n\n"
+
+    content += f"Creato il: {tour.created_at.strftime('%d/%m/%Y') if tour.created_at else 'N/A'}\n"
+    content += f"Ultimo aggiornamento: {tour.updated_at.strftime('%d/%m/%Y') if tour.updated_at else 'N/A'}\n"
+
+    return content
+
+def create_tour_file_in_vector_store(tour):
+    """Crea un file .txt nel vector store per un tour"""
+    try:
+        # Genera il contenuto del file
+        content = generate_tour_txt_content(tour)
+        
+        # Nome del file
+        filename = f"tour_{tour.id}_{tour.code}.txt"
+        
+        # Crea un file temporaneo
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_file:
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Carica il file nel vector store
+            with open(temp_file_path, 'rb') as file_to_upload:
+                vector_file = openai_client.files.create(
+                    file=file_to_upload,
+                    purpose='assistants'
+                )
+            
+            # Aggiungi il file al vector store
+            openai_client.beta.vector_stores.files.create(
+                vector_store_id=VECTOR_STORE_ID,
+                file_id=vector_file.id
+            )
+            
+            # Salva nel database
+            tour_file = TourFile.query.filter_by(tour_id=tour.id).first()
+            if tour_file:
+                # Aggiorna il record esistente
+                tour_file.filename = filename
+                tour_file.vector_store_file_id = vector_file.id
+                tour_file.updated_at = datetime.utcnow()
+            else:
+                # Crea un nuovo record
+                tour_file = TourFile(
+                    tour_id=tour.id,
+                    filename=filename,
+                    vector_store_file_id=vector_file.id
+                )
+                db.session.add(tour_file)
+            
+            db.session.commit()
+            
+            return {
+                'success': True,
+                'filename': filename,
+                'file_id': vector_file.id
+            }
+            
+        finally:
+            # Rimuovi il file temporaneo
+            os.unlink(temp_file_path)
+            
+    except Exception as e:
+        print(f"Errore nella creazione del file nel vector store: {e}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+def delete_tour_file_from_vector_store(tour_id):
+    """Elimina un file dal vector store"""
+    try:
+        # Trova il record nel database
+        tour_file = TourFile.query.filter_by(tour_id=tour_id).first()
+        
+        if not tour_file or not tour_file.vector_store_file_id:
+            return {'success': True, 'message': 'Nessun file da eliminare'}
+        
+        try:
+            # Rimuovi il file dal vector store
+            openai_client.beta.vector_stores.files.delete(
+                vector_store_id=VECTOR_STORE_ID,
+                file_id=tour_file.vector_store_file_id
+            )
+            
+            # Elimina anche il file da OpenAI
+            openai_client.files.delete(tour_file.vector_store_file_id)
+            
+        except Exception as e:
+            print(f"Errore nell'eliminazione del file da OpenAI: {e}")
+            # Continua comunque con l'eliminazione dal database
+        
+        # Elimina il record dal database
+        db.session.delete(tour_file)
+        db.session.commit()
+        
+        return {'success': True, 'message': 'File eliminato con successo'}
+        
+    except Exception as e:
+        print(f"Errore nell'eliminazione del file dal vector store: {e}")
+        return {
+            'success': False,
+            'error': str(e)
         }
 
 # Creazione delle tabelle
@@ -215,6 +440,11 @@ def create_tour():
         db.session.add(tour)
         db.session.commit()
         
+        # Crea il file nel vector store
+        vector_result = create_tour_file_in_vector_store(tour)
+        if not vector_result['success']:
+            print(f"Errore nella creazione del file vector store per tour {tour.id}: {vector_result.get('error')}")
+        
         return jsonify(tour.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -264,6 +494,11 @@ def update_tour(tour_id):
         
         db.session.commit()
         
+        # Aggiorna il file nel vector store
+        vector_result = create_tour_file_in_vector_store(tour)
+        if not vector_result['success']:
+            print(f"Errore nell'aggiornamento del file vector store per tour {tour.id}: {vector_result.get('error')}")
+        
         return jsonify(tour.to_dict())
     except Exception as e:
         db.session.rollback()
@@ -274,6 +509,12 @@ def update_tour(tour_id):
 def delete_tour(tour_id):
     try:
         tour = Tour.query.get_or_404(tour_id)
+        
+        # Elimina il file dal vector store prima di eliminare il tour
+        vector_result = delete_tour_file_from_vector_store(tour_id)
+        if not vector_result['success']:
+            print(f"Errore nell'eliminazione del file vector store per tour {tour_id}: {vector_result.get('error')}")
+        
         db.session.delete(tour)
         db.session.commit()
         return jsonify({'message': 'Tour eliminato con successo'})
@@ -432,6 +673,126 @@ def upload_tour_image(tour_id, image_type):
         return jsonify({'message': f'Immagine {image_type} caricata con successo'})
     except Exception as e:
         db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+
+# Route per il chatbot AI
+@app.route('/api/chat', methods=['POST'])
+def chat_with_ai():
+    try:
+        data = request.get_json()
+        user_message = data.get('message', '')
+        
+        if not user_message:
+            return jsonify({'error': 'Messaggio richiesto'}), 400
+        
+        # Crea un assistant temporaneo per questa conversazione
+        assistant = openai_client.beta.assistants.create(
+            name="Go2West Travel Assistant",
+            instructions="""Sei un assistente virtuale specializzato nei viaggi di Go2West, un'agenzia di viaggi italiana che organizza tour negli Stati Uniti, Canada, Messico, America Centrale, Sud America, Caraibi e Polinesia Francese.
+
+Il tuo compito è aiutare i clienti fornendo informazioni dettagliate sui tour disponibili, prezzi, itinerari, date, inclusi/esclusi e tutto ciò che riguarda i viaggi.
+
+Rispondi sempre in italiano in modo professionale, cordiale e informativo. Se non hai informazioni specifiche su un tour, suggerisci di contattare l'agenzia per maggiori dettagli.
+
+Puoi aiutare con:
+- Informazioni sui tour disponibili
+- Prezzi e date
+- Itinerari dettagliati
+- Cosa è incluso/escluso nei tour
+- Consigli su destinazioni
+- Tipologie di viaggio (city breaks, fly & drive, tour guidati, etc.)
+
+Mantieni sempre un tono professionale ma amichevole, come un consulente di viaggio esperto.""",
+            model="gpt-4o",
+            tools=[{"type": "file_search"}],
+            tool_resources={
+                "file_search": {
+                    "vector_store_ids": [VECTOR_STORE_ID]
+                }
+            }
+        )
+        
+        # Crea un thread per la conversazione
+        thread = openai_client.beta.threads.create()
+        
+        # Aggiungi il messaggio dell'utente
+        openai_client.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content=user_message
+        )
+        
+        # Esegui l'assistant
+        run = openai_client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=assistant.id
+        )
+        
+        # Attendi il completamento
+        import time
+        while run.status in ['queued', 'in_progress']:
+            time.sleep(1)
+            run = openai_client.beta.threads.runs.retrieve(
+                thread_id=thread.id,
+                run_id=run.id
+            )
+        
+        if run.status == 'completed':
+            # Ottieni la risposta
+            messages = openai_client.beta.threads.messages.list(
+                thread_id=thread.id
+            )
+            
+            assistant_message = None
+            for message in messages.data:
+                if message.role == 'assistant':
+                    assistant_message = message.content[0].text.value
+                    break
+            
+            # Pulisci le risorse
+            openai_client.beta.assistants.delete(assistant.id)
+            
+            return jsonify({
+                'response': assistant_message,
+                'status': 'success'
+            })
+        else:
+            # Pulisci le risorse in caso di errore
+            openai_client.beta.assistants.delete(assistant.id)
+            
+            return jsonify({
+                'error': f'Errore nell\'elaborazione: {run.status}',
+                'status': 'error'
+            }), 500
+            
+    except Exception as e:
+        print(f"Errore nel chatbot: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# Route per sincronizzare tutti i tour esistenti con il vector store
+@app.route('/api/sync-vector-store', methods=['POST'])
+def sync_vector_store():
+    try:
+        tours = Tour.query.all()
+        success_count = 0
+        error_count = 0
+        
+        for tour in tours:
+            result = create_tour_file_in_vector_store(tour)
+            if result['success']:
+                success_count += 1
+            else:
+                error_count += 1
+                print(f"Errore sincronizzazione tour {tour.id}: {result.get('error')}")
+        
+        return jsonify({
+            'message': 'Sincronizzazione completata',
+            'success_count': success_count,
+            'error_count': error_count,
+            'total_tours': len(tours)
+        })
+        
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 # Route di health check per Render
