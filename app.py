@@ -120,13 +120,19 @@ class Tour(db.Model):
     image5 = db.Column(db.LargeBinary)
     prices = db.Column(db.JSON)
     included = db.Column(db.JSON)
+    included_text = db.Column(db.Text)  # Testo unico per included quando included_mode = 'unique'
+    included_mode = db.Column(db.Enum('unique', 'list'), default='list')  # 'unique' per testo unico, 'list' per lista
     notIncluded = db.Column(db.JSON)
-    duration = db.Column(db.Integer)
+    notIncluded_text = db.Column(db.Text)  # Testo unico per notIncluded quando notIncluded_mode = 'unique'
+    notIncluded_mode = db.Column(db.Enum('unique', 'list'), default='list')  # 'unique' per testo unico, 'list' per lista
+    duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
     type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
     geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
+    dates_text = db.Column(db.Text)  # Testo unico per dates quando dates_mode = 'unique'
+    dates_mode = db.Column(db.Enum('unique', 'structured'), default='structured')  # 'unique' per testo unico, 'structured' per JSON strutturato
     minPrice = db.Column(db.Numeric(10, 2))
     pasti = db.Column(db.Text)
     itinerario = db.Column(db.Text)
@@ -154,12 +160,18 @@ class Tour(db.Model):
             'image5': bool(self.image5),
             'prices': self.prices,
             'included': self.included,
+            'includedText': self.included_text,
+            'includedMode': self.included_mode,
             'notIncluded': self.notIncluded,
+            'notIncludedText': self.notIncluded_text,
+            'notIncludedMode': self.notIncluded_mode,
             'duration': self.duration,
             'type': self.type,
             'destination': self.destination,
             'notes': self.notes,
             'dates': self.dates,
+            'datesText': self.dates_text,
+            'datesMode': self.dates_mode,
             'minPrice': float(self.minPrice) if self.minPrice else None,
             'pasti': self.pasti,
             'itinerario': self.itinerario,
@@ -487,6 +499,37 @@ def create_tour():
             itinerario = None
             print(f"DEBUG CREATE: Salvato in modalità DAYS, program ha {len(program.get('days', [])) if program else 0} giorni")
         
+        # Gestione delle modalità per dates, included, notIncluded
+        dates_mode = data.get('datesMode', 'structured')
+        dates_data = None
+        dates_text_data = None
+        if dates_mode == 'unique':
+            dates_text_data = data.get('datesText')
+            dates_data = None
+        else:
+            dates_data = data.get('dates')
+            dates_text_data = None
+        
+        included_mode = data.get('includedMode', 'list')
+        included_data = None
+        included_text_data = None
+        if included_mode == 'unique':
+            included_text_data = data.get('includedText')
+            included_data = None
+        else:
+            included_data = data.get('included')
+            included_text_data = None
+        
+        notIncluded_mode = data.get('notIncludedMode', 'list')
+        notIncluded_data = None
+        notIncluded_text_data = None
+        if notIncluded_mode == 'unique':
+            notIncluded_text_data = data.get('notIncludedText')
+            notIncluded_data = None
+        else:
+            notIncluded_data = data.get('notIncluded')
+            notIncluded_text_data = None
+        
         # Creazione del tour con la nuova struttura (senza immagini, caricate separatamente)
         tour = Tour(
             code=code,
@@ -494,14 +537,20 @@ def create_tour():
             description=data.get('description'),
             program=program,
             prices=data.get('prices'),
-            included=data.get('included'),
-            notIncluded=data.get('notIncluded'),
+            included=included_data,
+            included_text=included_text_data,
+            included_mode=included_mode,
+            notIncluded=notIncluded_data,
+            notIncluded_text=notIncluded_text_data,
+            notIncluded_mode=notIncluded_mode,
             duration=data.get('duration'),
             type=data['type'],
             destination=data['destination'],
             geographic_area=data.get('geographicArea'),
             notes=data.get('notes'),
-            dates=data.get('dates'),
+            dates=dates_data,
+            dates_text=dates_text_data,
+            dates_mode=dates_mode,
             minPrice=data.get('minPrice'),
             pasti=data.get('pasti'),
             itinerario=itinerario,
@@ -561,19 +610,45 @@ def update_tour(tour_id):
             tour.itinerario = None
             print(f"DEBUG UPDATE: Salvato in modalità DAYS, program ha {len(tour.program.get('days', [])) if tour.program else 0} giorni")
         
+        # Gestione delle modalità per dates, included, notIncluded
+        dates_mode = data.get('datesMode', 'structured')
+        if dates_mode == 'unique':
+            tour.dates_text = data.get('datesText')
+            tour.dates = None
+        else:
+            tour.dates = data.get('dates')
+            tour.dates_text = None
+        tour.dates_mode = dates_mode
+        
+        included_mode = data.get('includedMode', 'list')
+        if included_mode == 'unique':
+            tour.included_text = data.get('includedText')
+            tour.included = None
+        else:
+            tour.included = data.get('included')
+            tour.included_text = None
+        tour.included_mode = included_mode
+        
+        notIncluded_mode = data.get('notIncludedMode', 'list')
+        if notIncluded_mode == 'unique':
+            tour.notIncluded_text = data.get('notIncludedText')
+            tour.notIncluded = None
+        else:
+            tour.notIncluded = data.get('notIncluded')
+            tour.notIncluded_text = None
+        tour.notIncluded_mode = notIncluded_mode
+        
         # Aggiornamento dei campi (senza immagini, caricate separatamente)
         tour.code = code
         tour.title = data['title']
         tour.description = data.get('description')
+        tour.program = program
         tour.prices = data.get('prices')
-        tour.included = data.get('included')
-        tour.notIncluded = data.get('notIncluded')
         tour.duration = data.get('duration')
         tour.type = data['type']
         tour.destination = data['destination']
         tour.geographic_area = data.get('geographicArea')
         tour.notes = data.get('notes')
-        tour.dates = data.get('dates')
         tour.minPrice = data.get('minPrice')
         tour.pasti = data.get('pasti')
         tour.itinerario_mode = itinerario_mode
