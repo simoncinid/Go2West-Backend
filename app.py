@@ -122,13 +122,16 @@ class Tour(db.Model):
     included = db.Column(db.JSON)
     notIncluded = db.Column(db.JSON)
     duration = db.Column(db.Integer)
-    type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra'), nullable=False)
+    type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
+    geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
     minPrice = db.Column(db.Numeric(10, 2))
     pasti = db.Column(db.Text)
     itinerario = db.Column(db.Text)
+    itinerario_mode = db.Column(db.Enum('unique', 'days'), default='days')  # 'unique' per testo unico, 'days' per giorni
+    mapImage = db.Column(db.LargeBinary)  # Immagine della cartina con l'itinerario
     is_promotion = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -160,6 +163,9 @@ class Tour(db.Model):
             'minPrice': float(self.minPrice) if self.minPrice else None,
             'pasti': self.pasti,
             'itinerario': self.itinerario,
+            'itinerarioMode': self.itinerario_mode,
+            'geographicArea': self.geographic_area,
+            'mapImage': bool(self.mapImage),
             'isPromotion': self.is_promotion,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -464,23 +470,42 @@ def create_tour():
         if existing_tour:
             return jsonify({'error': 'Code già esistente'}), 400
         
+        # Gestione della modalità itinerario
+        itinerario_mode = data.get('itinerarioMode', 'days')
+        print(f"DEBUG CREATE: itinerarioMode ricevuto: '{itinerario_mode}', tipo: {type(itinerario_mode)}")
+        program = None
+        itinerario = None
+        
+        if itinerario_mode == 'unique':
+            # Se è modalità unique, salva solo il testo e azzera program
+            itinerario = data.get('itinerario')
+            program = None
+            print(f"DEBUG CREATE: Salvato in modalità UNIQUE, itinerario: {itinerario[:50] if itinerario else 'None'}...")
+        else:
+            # Se è modalità days, salva solo program e azzera itinerario
+            program = data.get('program')
+            itinerario = None
+            print(f"DEBUG CREATE: Salvato in modalità DAYS, program ha {len(program.get('days', [])) if program else 0} giorni")
+        
         # Creazione del tour con la nuova struttura (senza immagini, caricate separatamente)
         tour = Tour(
             code=code,
             title=data['title'],
             description=data.get('description'),
-            program=data.get('program'),
+            program=program,
             prices=data.get('prices'),
             included=data.get('included'),
             notIncluded=data.get('notIncluded'),
             duration=data.get('duration'),
             type=data['type'],
             destination=data['destination'],
+            geographic_area=data.get('geographicArea'),
             notes=data.get('notes'),
             dates=data.get('dates'),
             minPrice=data.get('minPrice'),
             pasti=data.get('pasti'),
-            itinerario=data.get('itinerario'),
+            itinerario=itinerario,
+            itinerario_mode=itinerario_mode,
             is_promotion=data.get('isPromotion', False)
         )
         
@@ -520,22 +545,38 @@ def update_tour(tour_id):
         if existing_tour and existing_tour.id != tour_id:
             return jsonify({'error': 'Code già esistente'}), 400
         
+        # Gestione della modalità itinerario
+        itinerario_mode = data.get('itinerarioMode', 'days')
+        print(f"DEBUG UPDATE: itinerarioMode ricevuto: '{itinerario_mode}', tipo: {type(itinerario_mode)}")
+        print(f"DEBUG UPDATE: chiavi nel data: {list(data.keys())}")
+        
+        if itinerario_mode == 'unique':
+            # Se è modalità unique, salva solo il testo e azzera program
+            tour.itinerario = data.get('itinerario')
+            tour.program = None
+            print(f"DEBUG UPDATE: Salvato in modalità UNIQUE, itinerario: {tour.itinerario[:50] if tour.itinerario else 'None'}...")
+        else:
+            # Se è modalità days, salva solo program e azzera itinerario
+            tour.program = data.get('program')
+            tour.itinerario = None
+            print(f"DEBUG UPDATE: Salvato in modalità DAYS, program ha {len(tour.program.get('days', [])) if tour.program else 0} giorni")
+        
         # Aggiornamento dei campi (senza immagini, caricate separatamente)
         tour.code = code
         tour.title = data['title']
         tour.description = data.get('description')
-        tour.program = data.get('program')
         tour.prices = data.get('prices')
         tour.included = data.get('included')
         tour.notIncluded = data.get('notIncluded')
         tour.duration = data.get('duration')
         tour.type = data['type']
         tour.destination = data['destination']
+        tour.geographic_area = data.get('geographicArea')
         tour.notes = data.get('notes')
         tour.dates = data.get('dates')
         tour.minPrice = data.get('minPrice')
         tour.pasti = data.get('pasti')
-        tour.itinerario = data.get('itinerario')
+        tour.itinerario_mode = itinerario_mode
         tour.is_promotion = data.get('isPromotion', False)
         tour.updated_at = datetime.utcnow()
         
@@ -608,6 +649,15 @@ def get_tour_by_code(code):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# Route per ottenere tour per area geografica
+@app.route('/api/tours/area/<geographic_area>', methods=['GET'])
+def get_tours_by_area(geographic_area):
+    try:
+        tours = Tour.query.filter_by(geographic_area=geographic_area).all()
+        return jsonify([tour.to_dict() for tour in tours])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # Route per aggiornare solo lo stato promozione di un tour
 @app.route('/api/tours/<int:tour_id>/promotion', methods=['PUT'])
 def update_tour_promotion(tour_id):
@@ -633,7 +683,7 @@ def update_tour_promotion(tour_id):
         return jsonify({'error': str(e)}), 500
 
 # Route per servire le immagini
-@app.route('/api/tours/<int:tour_id>/image/<image_type>', methods=['GET'])
+@app.route('/api/tours/<int:tour_id>/image/<path:image_type>', methods=['GET'])
 def get_tour_image(tour_id, image_type):
     try:
         tour = Tour.query.get_or_404(tour_id)
@@ -648,7 +698,8 @@ def get_tour_image(tour_id, image_type):
             'image2': tour.image2,
             'image3': tour.image3,
             'image4': tour.image4,
-            'image5': tour.image5
+            'image5': tour.image5,
+            'map': tour.mapImage
         }
         
         if image_type not in image_fields:
@@ -676,7 +727,7 @@ def get_tour_image(tour_id, image_type):
         return jsonify({'error': str(e)}), 500
 
 # Route per caricare un'immagine
-@app.route('/api/tours/<int:tour_id>/image/<image_type>', methods=['POST'])
+@app.route('/api/tours/<int:tour_id>/image/<path:image_type>', methods=['POST'])
 def upload_tour_image(tour_id, image_type):
     try:
         tour = Tour.query.get_or_404(tour_id)
@@ -705,11 +756,17 @@ def upload_tour_image(tour_id, image_type):
             'image2': 'image2',
             'image3': 'image3',
             'image4': 'image4',
-            'image5': 'image5'
+            'image5': 'image5',
+            'map': 'mapImage'
         }
         
+        # Debug: stampa il tipo di immagine ricevuto
+        print(f"DEBUG: Tipo immagine ricevuto: '{image_type}', Tipi validi: {list(image_fields.keys())}")
+        print(f"DEBUG: image_type in image_fields: {image_type in image_fields}")
+        
         if image_type not in image_fields:
-            return jsonify({'error': 'Tipo di immagine non valido'}), 400
+            print(f"ERRORE: Tipo immagine '{image_type}' non trovato nei tipi validi")
+            return jsonify({'error': f'Tipo di immagine non valido: {image_type}. Tipi validi: {list(image_fields.keys())}'}), 400
         
         # Aggiorna il campo dell'immagine
         setattr(tour, image_fields[image_type], image_data)
@@ -717,9 +774,13 @@ def upload_tour_image(tour_id, image_type):
         
         db.session.commit()
         
+        print(f"SUCCESS: Immagine {image_type} caricata con successo per tour {tour_id}")
         return jsonify({'message': f'Immagine {image_type} caricata con successo'})
     except Exception as e:
         db.session.rollback()
+        print(f"ERRORE nel caricamento immagine: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Route per il chatbot AI
@@ -849,8 +910,8 @@ def index():
             'health': '/health'
         },
         'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
-        'types': ['city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra'],
-        'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5']
+        'types': ['city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno'],
+        'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5', 'map']
     })
 
 if __name__ == '__main__':
