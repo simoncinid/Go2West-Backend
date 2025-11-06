@@ -642,7 +642,6 @@ def update_tour(tour_id):
         tour.code = code
         tour.title = data['title']
         tour.description = data.get('description')
-        tour.program = program
         tour.prices = data.get('prices')
         tour.duration = data.get('duration')
         tour.type = data['type']
