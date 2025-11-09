@@ -12,7 +12,7 @@ from openai import OpenAI
 import json
 import re
 
-# Registra PyMySQL come driver MySQL
+# Registra PyMySQL come driver MySQL.
 pymysql.install_as_MySQLdb()
 
 # Carica le variabili d'ambiente
