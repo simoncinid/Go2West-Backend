@@ -138,6 +138,7 @@ class Tour(db.Model):
     itinerario = db.Column(db.Text)
     itinerario_mode = db.Column(db.Enum('unique', 'days'), default='days')  # 'unique' per testo unico, 'days' per giorni
     mapImage = db.Column(db.LargeBinary)  # Immagine della cartina con l'itinerario
+    pdfUrl = db.Column(db.LargeBinary)  # PDF del tour
     is_promotion = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -178,6 +179,7 @@ class Tour(db.Model):
             'itinerarioMode': self.itinerario_mode,
             'geographicArea': self.geographic_area,
             'mapImage': bool(self.mapImage),
+            'pdfUrl': bool(self.pdfUrl),  # Restituisce True se esiste, False altrimenti
             'isPromotion': self.is_promotion,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -857,6 +859,67 @@ def upload_tour_image(tour_id, image_type):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# Route per servire il PDF
+@app.route('/api/tours/<int:tour_id>/pdf', methods=['GET'])
+def get_tour_pdf(tour_id):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        if not tour.pdfUrl:
+            return jsonify({'error': 'PDF non trovato'}), 404
+        
+        # Determina il tipo MIME per PDF
+        mimetype = 'application/pdf'
+        
+        return Response(tour.pdfUrl, mimetype=mimetype, headers={
+            'Content-Disposition': f'inline; filename=tour_{tour_id}.pdf'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# Route per caricare un PDF
+@app.route('/api/tours/<int:tour_id>/pdf', methods=['POST'])
+def upload_tour_pdf(tour_id):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        # Verifica che ci sia un file nell'upload
+        if 'pdf' not in request.files:
+            return jsonify({'error': 'Nessun file PDF fornito'}), 400
+        
+        file = request.files['pdf']
+        if file.filename == '':
+            return jsonify({'error': 'Nessun file selezionato'}), 400
+        
+        # Verifica che sia un PDF
+        if not file.filename.lower().endswith('.pdf'):
+            return jsonify({'error': 'Il file deve essere un PDF'}), 400
+        
+        # Leggi i dati del file
+        pdf_data = file.read()
+        
+        # Verifica che i primi byte siano quelli di un PDF
+        if not pdf_data.startswith(b'%PDF'):
+            return jsonify({'error': 'Il file non è un PDF valido'}), 400
+        
+        # Aggiorna il campo del PDF
+        tour.pdfUrl = pdf_data
+        tour.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        print(f"SUCCESS: PDF caricato con successo per tour {tour_id}")
+        return jsonify({
+            'message': 'PDF caricato con successo',
+            'pdfUrl': f'/api/tours/{tour_id}/pdf'
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERRORE nel caricamento PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 # Route per il chatbot AI
 @app.route('/api/chat', methods=['POST'])
 def chat_with_ai():
@@ -981,6 +1044,8 @@ def index():
             'update_promotion': '/api/tours/<id>/promotion',
             'get_image': '/api/tours/<id>/image/<image_type>',
             'upload_image': '/api/tours/<id>/image/<image_type>',
+            'get_pdf': '/api/tours/<id>/pdf',
+            'upload_pdf': '/api/tours/<id>/pdf',
             'health': '/health'
         },
         'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
