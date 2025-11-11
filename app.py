@@ -859,6 +859,49 @@ def upload_tour_image(tour_id, image_type):
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
+# Route per eliminare un'immagine
+@app.route('/api/tours/<int:tour_id>/image/<path:image_type>', methods=['DELETE'])
+def delete_tour_image(tour_id, image_type):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        # Mappa i tipi di immagine ai campi del modello
+        image_fields = {
+            'hero': 'heroImage',
+            'carousel1': 'carouselImage1',
+            'carousel2': 'carouselImage2',
+            'carousel3': 'carouselImage3',
+            'image1': 'image1',
+            'image2': 'image2',
+            'image3': 'image3',
+            'image4': 'image4',
+            'image5': 'image5',
+            'map': 'mapImage'
+        }
+        
+        if image_type not in image_fields:
+            return jsonify({'error': f'Tipo di immagine non valido: {image_type}'}), 400
+        
+        # Verifica che l'immagine esista
+        image_field = image_fields[image_type]
+        if not getattr(tour, image_field):
+            return jsonify({'error': 'Immagine non trovata'}), 404
+        
+        # Elimina l'immagine impostandola a None
+        setattr(tour, image_field, None)
+        tour.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        print(f"SUCCESS: Immagine {image_type} eliminata con successo per tour {tour_id}")
+        return jsonify({'message': f'Immagine {image_type} eliminata con successo'})
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERRORE nell'eliminazione immagine: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 # Route per servire il PDF
 @app.route('/api/tours/<int:tour_id>/pdf', methods=['GET'])
 def get_tour_pdf(tour_id):
@@ -916,6 +959,31 @@ def upload_tour_pdf(tour_id):
     except Exception as e:
         db.session.rollback()
         print(f"ERRORE nel caricamento PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+# Route per eliminare un PDF
+@app.route('/api/tours/<int:tour_id>/pdf', methods=['DELETE'])
+def delete_tour_pdf(tour_id):
+    try:
+        tour = Tour.query.get_or_404(tour_id)
+        
+        # Verifica che il PDF esista
+        if not tour.pdfUrl:
+            return jsonify({'error': 'PDF non trovato'}), 404
+        
+        # Elimina il PDF impostandolo a None
+        tour.pdfUrl = None
+        tour.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        print(f"SUCCESS: PDF eliminato con successo per tour {tour_id}")
+        return jsonify({'message': 'PDF eliminato con successo'})
+    except Exception as e:
+        db.session.rollback()
+        print(f"ERRORE nell'eliminazione PDF: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
@@ -1044,8 +1112,10 @@ def index():
             'update_promotion': '/api/tours/<id>/promotion',
             'get_image': '/api/tours/<id>/image/<image_type>',
             'upload_image': '/api/tours/<id>/image/<image_type>',
+            'delete_image': '/api/tours/<id>/image/<image_type>',
             'get_pdf': '/api/tours/<id>/pdf',
             'upload_pdf': '/api/tours/<id>/pdf',
+            'delete_pdf': '/api/tours/<id>/pdf',
             'health': '/health'
         },
         'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
