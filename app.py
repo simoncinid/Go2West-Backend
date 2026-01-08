@@ -128,6 +128,8 @@ class Tour(db.Model):
     duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
     type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
+    destinations = db.Column(db.JSON)  # Array JSON di destinazioni multiple
+    countries = db.Column(db.JSON)  # Array JSON di paesi
     geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
@@ -169,6 +171,8 @@ class Tour(db.Model):
             'duration': self.duration,
             'type': self.type,
             'destination': self.destination,
+            'destinations': self.destinations if self.destinations else [],
+            'countries': self.countries if self.countries else [],
             'notes': self.notes,
             'dates': self.dates,
             'datesText': self.dates_text,
@@ -548,6 +552,8 @@ def create_tour():
             duration=data.get('duration'),
             type=data['type'],
             destination=data['destination'],
+            destinations=data.get('destinations'),
+            countries=data.get('countries'),
             geographic_area=data.get('geographicArea'),
             notes=data.get('notes'),
             dates=dates_data,
@@ -648,6 +654,8 @@ def update_tour(tour_id):
         tour.duration = data.get('duration')
         tour.type = data['type']
         tour.destination = data['destination']
+        tour.destinations = data.get('destinations')
+        tour.countries = data.get('countries')
         tour.geographic_area = data.get('geographicArea')
         tour.notes = data.get('notes')
         tour.minPrice = data.get('minPrice')
