@@ -103,6 +103,7 @@ ASSISTANT_ID = "asst_cxykjx2GVPkdYqmHXhRrD6D5"
 # Modello per i tour
 class Tour(db.Model):
     __tablename__ = 'tours'
+    __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(200), unique=True, nullable=False)
@@ -128,8 +129,8 @@ class Tour(db.Model):
     duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
     type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
-    destinations = db.Column(db.JSON)  # Array JSON di destinazioni multiple
-    countries = db.Column(db.JSON)  # Array JSON di paesi
+    destinations = db.Column(db.JSON, nullable=True)  # Array JSON di destinazioni multiple
+    countries = db.Column(db.JSON, nullable=True)  # Array JSON di paesi
     geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
     notes = db.Column(db.Text)
     dates = db.Column(db.JSON)
@@ -146,6 +147,19 @@ class Tour(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
+        # Gestione sicura per destinations e countries (potrebbero non esistere ancora nel DB)
+        try:
+            destinations = getattr(self, 'destinations', None)
+            destinations = destinations if destinations else []
+        except (AttributeError, KeyError):
+            destinations = []
+        
+        try:
+            countries = getattr(self, 'countries', None)
+            countries = countries if countries else []
+        except (AttributeError, KeyError):
+            countries = []
+        
         return {
             'id': self.id,
             'code': self.code,
@@ -171,8 +185,8 @@ class Tour(db.Model):
             'duration': self.duration,
             'type': self.type,
             'destination': self.destination,
-            'destinations': self.destinations if self.destinations else [],
-            'countries': self.countries if self.countries else [],
+            'destinations': destinations,
+            'countries': countries,
             'notes': self.notes,
             'dates': self.dates,
             'datesText': self.dates_text,
@@ -455,7 +469,84 @@ def get_tours():
             
         return jsonify([tour.to_dict() for tour in tours])
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        # Se l'errore è dovuto a colonne mancanti, prova con una query SQL raw
+        error_msg = str(e).lower()
+        if 'destinations' in error_msg or 'countries' in error_msg or 'unknown column' in error_msg:
+            try:
+                print(f"⚠️ Colonne destinations/countries non trovate, uso query SQL raw")
+                # Query SQL raw che esclude le colonne opzionali se non esistono
+                promotion_where = "WHERE is_promotion = 1" if promotion_filter and promotion_filter.lower() == 'true' else ""
+                
+                # Prima verifica quali colonne esistono
+                with db.engine.connect() as conn:
+                    # Controlla se le colonne esistono
+                    check_cols_query = """
+                        SELECT COLUMN_NAME 
+                        FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = DATABASE() 
+                        AND TABLE_NAME = 'tours' 
+                        AND COLUMN_NAME IN ('destinations', 'countries')
+                    """
+                    result = conn.execute(db.text(check_cols_query))
+                    existing_cols = [row[0] for row in result]
+                    
+                    # Costruisci la query SELECT
+                    base_cols = [
+                        'id', 'code', 'title', 'description', 'program', 'prices', 
+                        'included', 'notIncluded', 'duration', 'type', 'destination',
+                        'notes', 'dates', 'geographic_area', 'minPrice', 'pasti', 
+                        'itinerario', 'is_promotion', 'created_at', 'updated_at',
+                        'included_text', 'included_mode', 'notIncluded_text', 'notIncluded_mode',
+                        'dates_text', 'dates_mode', 'itinerario_mode'
+                    ]
+                    
+                    # Aggiungi le colonne opzionali solo se esistono
+                    if 'destinations' in existing_cols:
+                        base_cols.append('destinations')
+                    if 'countries' in existing_cols:
+                        base_cols.append('countries')
+                    
+                    cols_str = ', '.join(base_cols)
+                    query = f"SELECT {cols_str} FROM tours {promotion_where} ORDER BY id"
+                    
+                    result = conn.execute(db.text(query))
+                    rows = result.fetchall()
+                    
+                    # Converti i risultati in dizionari
+                    tours_data = []
+                    for row in rows:
+                        tour_dict = dict(row._mapping)
+                        # Converti geographic_area in geographicArea
+                        if 'geographic_area' in tour_dict:
+                            tour_dict['geographicArea'] = tour_dict.pop('geographic_area')
+                        # Assicurati che destinations e countries siano array
+                        if 'destinations' not in tour_dict:
+                            tour_dict['destinations'] = []
+                        elif tour_dict['destinations'] is None:
+                            tour_dict['destinations'] = []
+                        if 'countries' not in tour_dict:
+                            tour_dict['countries'] = []
+                        elif tour_dict['countries'] is None:
+                            tour_dict['countries'] = []
+                        # Converti altri campi se necessario
+                        if tour_dict.get('minPrice') is not None:
+                            tour_dict['minPrice'] = float(tour_dict['minPrice'])
+                        tours_data.append(tour_dict)
+                    
+                    return jsonify(tours_data)
+            except Exception as e2:
+                import traceback
+                error_trace = traceback.format_exc()
+                print(f"ERRORE anche con query SQL raw: {str(e2)}")
+                print(f"Traceback: {error_trace}")
+                return jsonify({'error': str(e2), 'traceback': error_trace}), 500
+        
+        # Se l'errore non è relativo alle colonne mancanti, restituisci l'errore originale
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"ERRORE in get_tours(): {str(e)}")
+        print(f"Traceback: {error_trace}")
+        return jsonify({'error': str(e), 'traceback': error_trace}), 500
 
 # Route per ottenere un tour specifico
 @app.route('/api/tours/<int:tour_id>', methods=['GET'])
