@@ -12,7 +12,7 @@ from openai import OpenAI
 import json
 import re
 
-# Registra PyMySQL come driver MySQL.
+# Registra PyMySQL come driver MySQL. 
 pymysql.install_as_MySQLdb()
 
 # Carica le variabili d'ambiente
@@ -127,7 +127,7 @@ class Tour(db.Model):
     notIncluded_text = db.Column(db.Text)  # Testo unico per notIncluded quando notIncluded_mode = 'unique'
     notIncluded_mode = db.Column(db.Enum('unique', 'list'), default='list')  # 'unique' per testo unico, 'list' per lista
     duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
-    type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno', 'hotel/resort'), nullable=False)
+    type = db.Column(db.Enum('city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno', 'hotel/resort', 'Glamping usa'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
     destinations = db.Column(db.JSON, nullable=True)  # Array JSON di destinazioni multiple
     countries = db.Column(db.JSON, nullable=True)  # Array JSON di paesi
@@ -1218,7 +1218,7 @@ def index():
             'health': '/health'
         },
         'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
-        'types': ['city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno', 'hotel/resort'],
+        'types': ['city breaks', 'fly and drive', 'ride in harley', 'tour guidato', 'luxury travel', 'camper adventure', 'extra', 'tour guidati (di gruppo)', 'fly & drive (individuali)', 'under canvas usa', 'ranch usa e canada', 'camper adventures', 'scoperta in treno', 'hotel/resort', 'Glamping usa'],
         'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5', 'map']
     })
 
