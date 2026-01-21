@@ -128,7 +128,7 @@ class Tour(db.Model):
     notIncluded_mode = db.Column(db.Enum('unique', 'list'), default='list')  # 'unique' per testo unico, 'list' per lista
     duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
     type = db.Column(db.Enum('city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'extra'), nullable=False)
-    destination = db.Column(db.Enum('USA', 'Hawaii', 'Alaska', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
+    destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
     destinations = db.Column(db.JSON, nullable=True)  # Array JSON di destinazioni multiple
     countries = db.Column(db.JSON, nullable=True)  # Array JSON di paesi
     geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
@@ -1217,7 +1217,8 @@ def index():
             'delete_pdf': '/api/tours/<id>/pdf',
             'health': '/health'
         },
-        'destinations': ['USA', 'Hawaii', 'Alaska', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
+        'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
+        'usa_zones': ['EST', 'OVEST', 'EST E OVEST', 'SOUTH', 'MID WEST', 'HAWAII', 'ALASKA'],
         'types': ['city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'extra'],
         'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5', 'map']
     })

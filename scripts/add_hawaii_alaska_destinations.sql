@@ -1,16 +1,14 @@
--- Aggiunge Hawaii e Alaska come destinazioni (stesso livello di USA, Canada, ecc.)
--- Eseguire sul database: defaultdb, tabella: tours
+-- Aggiunge HAWAII e ALASKA alle zone USA (geographic_area) insieme a EST, OVEST, SOUTH, ecc.
+-- Eseguire solo se la colonna geographic_area è di tipo ENUM.
+-- Se è VARCHAR/TEXT non serve: i valori sono già accettati.
 
--- Modifica la colonna destination per includere 'Hawaii' e 'Alaska'
 ALTER TABLE tours
-MODIFY COLUMN destination ENUM(
-  'USA',
-  'Hawaii',
-  'Alaska',
-  'Canada',
-  'Messico',
-  'America Centrale',
-  'Sud America',
-  'Caraibi',
-  'Polinesia Francese'
-) NOT NULL;
+MODIFY COLUMN geographic_area ENUM(
+  'EST',
+  'OVEST',
+  'EST E OVEST',
+  'SOUTH',
+  'MID WEST',
+  'HAWAII',
+  'ALASKA'
+) NULL;

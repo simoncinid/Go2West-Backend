@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Esegue l'ALTER sulla tabella tours per aggiungere Hawaii e Alaska alla colonna destination.
+Aggiunge HAWAII e ALASKA alle zone USA (geographic_area) insieme a EST, OVEST, SOUTH, MID WEST.
+Esegue l'ALTER solo se geographic_area è ENUM. Se è VARCHAR non serve.
 Richiede: .env con DB_CERTIFICATE (o variabili DB_*) e pymysql.
 Uso: python scripts/run_add_destinations.py
 """
 import os
 import sys
 
-# Aggiungi la root del progetto
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pymysql
@@ -17,17 +17,15 @@ load_dotenv()
 
 ALTER_SQL = """
 ALTER TABLE tours
-MODIFY COLUMN destination ENUM(
-  'USA',
-  'Hawaii',
-  'Alaska',
-  'Canada',
-  'Messico',
-  'America Centrale',
-  'Sud America',
-  'Caraibi',
-  'Polinesia Francese'
-) NOT NULL;
+MODIFY COLUMN geographic_area ENUM(
+  'EST',
+  'OVEST',
+  'EST E OVEST',
+  'SOUTH',
+  'MID WEST',
+  'HAWAII',
+  'ALASKA'
+) NULL;
 """
 
 def main():
@@ -49,7 +47,7 @@ def main():
             cur.execute(ALTER_SQL)
         conn.commit()
         conn.close()
-        print('OK: Colonne Hawaii e Alaska aggiunte a destination.')
+        print('OK: HAWAII e ALASKA aggiunte a geographic_area (zone USA).')
     except Exception as e:
         print(f'Errore: {e}')
         sys.exit(1)
