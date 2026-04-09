@@ -11,6 +11,9 @@ import io
 from openai import OpenAI
 import json
 import re
+import time
+import threading
+from collections import deque
 
 # Registra PyMySQL come driver MySQL. 
 pymysql.install_as_MySQLdb()
@@ -22,6 +25,20 @@ app = Flask(__name__)
 
 # Configurazione CORS per permettere le richieste dal frontend
 CORS(app)
+
+# Protezione anti-overload (es. picchi anomali / possibile DDoS)
+OVERLOAD_PROTECTION_ENABLED = os.environ.get('OVERLOAD_PROTECTION_ENABLED', 'true').lower() == 'true'
+OVERLOAD_REQUEST_THRESHOLD_PER_MINUTE = int(os.environ.get('OVERLOAD_REQUEST_THRESHOLD_PER_MINUTE', '300'))
+OVERLOAD_WINDOW_SECONDS = int(os.environ.get('OVERLOAD_WINDOW_SECONDS', '60'))
+OVERLOAD_COOLDOWN_SECONDS = int(os.environ.get('OVERLOAD_COOLDOWN_SECONDS', '120'))
+OVERLOAD_EXCLUDED_PATHS = set(
+    path.strip() for path in os.environ.get('OVERLOAD_EXCLUDED_PATHS', '/health').split(',') if path.strip()
+)
+
+# Stato runtime del guardiano overload
+overload_lock = threading.Lock()
+request_timestamps = deque()
+overload_block_until_ts = 0.0
 
 # Variabile globale per il file del certificato SSL
 ssl_cert_file = None
@@ -452,6 +469,62 @@ def delete_tour_file_from_vector_store(tour_id):
 # Creazione delle tabelle
 with app.app_context():
     db.create_all()
+
+@app.before_request
+def overload_guard():
+    """Blocca temporaneamente il backend se arriva troppo traffico in poco tempo."""
+    if not OVERLOAD_PROTECTION_ENABLED:
+        return None
+
+    if request.path in OVERLOAD_EXCLUDED_PATHS:
+        return None
+
+    now = time.time()
+
+    with overload_lock:
+        global overload_block_until_ts
+
+        # Se siamo in cooldown, rifiuta subito la richiesta
+        if now < overload_block_until_ts:
+            retry_after = max(1, int(overload_block_until_ts - now))
+            response = jsonify({
+                'error': 'Backend temporaneamente in protezione anti-overload',
+                'status': 'overload_protection',
+                'retryAfterSeconds': retry_after
+            })
+            response.status_code = 503
+            response.headers['Retry-After'] = str(retry_after)
+            return response
+
+        # Rimuove timestamp fuori finestra
+        window_start = now - OVERLOAD_WINDOW_SECONDS
+        while request_timestamps and request_timestamps[0] < window_start:
+            request_timestamps.popleft()
+
+        # Registra la richiesta corrente
+        request_timestamps.append(now)
+
+        # Se superiamo la soglia, entra in cooldown immediatamente
+        current_rpm = len(request_timestamps) * (60 / max(1, OVERLOAD_WINDOW_SECONDS))
+        if current_rpm > OVERLOAD_REQUEST_THRESHOLD_PER_MINUTE:
+            overload_block_until_ts = now + OVERLOAD_COOLDOWN_SECONDS
+            request_timestamps.clear()
+            print(
+                f"⚠️ OVERLOAD GUARD attivato: rpm={current_rpm:.1f}, "
+                f"threshold={OVERLOAD_REQUEST_THRESHOLD_PER_MINUTE}, "
+                f"cooldown={OVERLOAD_COOLDOWN_SECONDS}s"
+            )
+
+            response = jsonify({
+                'error': 'Backend temporaneamente in protezione anti-overload',
+                'status': 'overload_protection',
+                'retryAfterSeconds': OVERLOAD_COOLDOWN_SECONDS
+            })
+            response.status_code = 503
+            response.headers['Retry-After'] = str(OVERLOAD_COOLDOWN_SECONDS)
+            return response
+
+    return None
 
 # Route per ottenere tutti i tour
 @app.route('/api/tours', methods=['GET'])
