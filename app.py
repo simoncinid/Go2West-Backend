@@ -494,6 +494,10 @@ def overload_guard():
     if not OVERLOAD_PROTECTION_ENABLED:
         return None
 
+    # Non bloccare mai i preflight CORS: devono rispondere 2xx.
+    if request.method == 'OPTIONS':
+        return None
+
     if request.path in OVERLOAD_EXCLUDED_PATHS:
         return None
 
