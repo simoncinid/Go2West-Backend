@@ -116,6 +116,10 @@ except Exception as e:
 # ID del vector store e assistant
 VECTOR_STORE_ID = "vs_68f350c542d88191a4026139f8bae406"
 ASSISTANT_ID = "asst_cxykjx2GVPkdYqmHXhRrD6D5"
+TOUR_PUBLIC_URL_TEMPLATE = os.environ.get(
+    'TOUR_PUBLIC_URL_TEMPLATE',
+    'https://www.go2west.org/tour/{code}'
+)
 
 # Modello per i tour
 class Tour(db.Model):
@@ -246,14 +250,28 @@ class TourFile(db.Model):
 
 # Funzioni per la gestione del vector store e file .txt
 
+def build_tour_public_url(tour_code):
+    """Costruisce l'URL pubblico del tour a partire dal codice."""
+    if not tour_code:
+        return None
+
+    try:
+        return TOUR_PUBLIC_URL_TEMPLATE.format(code=tour_code)
+    except Exception:
+        # Se il template è malformato, usa un fallback sicuro.
+        return f"https://www.go2west.org/tour/{tour_code}"
+
 def generate_tour_txt_content(tour):
     """Genera il contenuto del file .txt per un tour"""
+    tour_link = build_tour_public_url(tour.code)
+
     content = f"""TOUR: {tour.title}
 CODICE: {tour.code}
 DESTINAZIONE: {tour.destination}
 TIPO DI VIAGGIO: {tour.type}
 DURATA: {tour.duration} giorni
 PREZZO MINIMO: €{tour.minPrice if tour.minPrice else 'Da definire'}
+LINK TOUR: {tour_link if tour_link else 'Non disponibile'}
 
 DESCRIZIONE:
 {tour.description or 'Nessuna descrizione disponibile'}
@@ -1165,7 +1183,7 @@ def delete_tour_pdf(tour_id):
 def chat_with_ai():
     if not CHATBOT_ENABLED or not openai_client:
         return jsonify({
-            'error': 'Chatbot non disponibile. Contatta direttamente l\'agenzia per informazioni sui tour.',
+            'error': 'Chatbot non disponibile al momento. Contattaci a preventivi@go2west.org e ti aiutiamo noi.',
             'status': 'error'
         }), 503
     

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Aggiunge HAWAII e ALASKA alle zone USA (geographic_area) insieme a EST, OVEST, SOUTH, MID WEST.
-Esegue l'ALTER solo se geographic_area è ENUM. Se è VARCHAR non serve.
+Converte geographic_area in VARCHAR(100) per evitare "Data truncated" (1265).
+Così restano validi tutti i valori esistenti (EST, OVEST, Sud America, ecc.)
+e si possono usare HAWAII e ALASKA senza altri ALTER.
 Richiede: .env con DB_CERTIFICATE (o variabili DB_*) e pymysql.
 Uso: python scripts/run_add_destinations.py
 """
@@ -15,17 +16,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# VARCHAR accetta qualunque valore; niente più errori 1265 per ENUM
 ALTER_SQL = """
 ALTER TABLE tours
-MODIFY COLUMN geographic_area ENUM(
-  'EST',
-  'OVEST',
-  'EST E OVEST',
-  'SOUTH',
-  'MID WEST',
-  'HAWAII',
-  'ALASKA'
-) NULL;
+MODIFY COLUMN geographic_area VARCHAR(100) NULL;
 """
 
 def main():
@@ -47,7 +41,7 @@ def main():
             cur.execute(ALTER_SQL)
         conn.commit()
         conn.close()
-        print('OK: HAWAII e ALASKA aggiunte a geographic_area (zone USA).')
+        print('OK: geographic_area convertita in VARCHAR(100). HAWAII e ALASKA utilizzabili.')
     except Exception as e:
         print(f'Errore: {e}')
         sys.exit(1)
