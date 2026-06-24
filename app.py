@@ -148,7 +148,7 @@ class Tour(db.Model):
     notIncluded_text = db.Column(db.Text)  # Testo unico per notIncluded quando notIncluded_mode = 'unique'
     notIncluded_mode = db.Column(db.Enum('unique', 'list'), default='list')  # 'unique' per testo unico, 'list' per lista
     duration = db.Column(db.String(100))  # Cambiato da Integer a String per permettere testo libero
-    type = db.Column(db.Enum('city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'extra'), nullable=False)
+    type = db.Column(db.Enum('city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'esperienze ed escursioni', 'extra'), nullable=False)
     destination = db.Column(db.Enum('USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'), nullable=False)
     destinations = db.Column(db.JSON, nullable=True)  # Array JSON di destinazioni multiple
     countries = db.Column(db.JSON, nullable=True)  # Array JSON di paesi
@@ -260,6 +260,68 @@ def build_tour_public_url(tour_code):
     except Exception:
         # Se il template è malformato, usa un fallback sicuro.
         return f"https://www.go2west.org/tour/{tour_code}"
+
+def sanitize_assistant_response(text):
+    """Pulisce la risposta dell'assistant da citazioni e riferimenti tecnici."""
+    if not text:
+        return text
+
+    cleaned = text
+    # Rimuove citazioni stile OpenAI Retrieval: 【4:0†file.txt】
+    cleaned = re.sub(r"【[^】]+】", "", cleaned)
+    # Rimuove citazioni numeriche tipo [1], [2], ecc.
+    cleaned = re.sub(r"\[\d+\]", "", cleaned)
+    # Normalizza spazi residui
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+def normalize_tour_links(text):
+    """Trasforma riferimenti 'Codice \"...\"' in URL diretti al tour."""
+    if not text:
+        return text
+
+    def build_link_from_code(code):
+        tour_code = (code or "").strip().strip('`"\'“”')
+        if not tour_code:
+            return code
+
+        # Accetta solo slug compatibili con i code tour.
+        if not re.match(r"^[a-z0-9][a-z0-9-]{1,}$", tour_code, flags=re.IGNORECASE):
+            return code
+
+        return build_tour_public_url(tour_code) or tour_code
+
+    def replace_code(match):
+        return build_link_from_code(match.group(1))
+
+    normalized = re.sub(
+        r'Codice\s*[:\-]?\s*["“”`]?([a-z0-9][a-z0-9-]*)["“”`]?',
+        replace_code,
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # Gestisce righe tipo: "Link tour: codice-xxx" o "Link tour: Codice 'codice-xxx'"
+    def replace_link_line(match):
+        prefix = match.group(1)
+        candidate = match.group(2)
+        maybe_url = build_link_from_code(candidate)
+
+        # Se non è un codice valido, lascia invariato.
+        if maybe_url == candidate:
+            return match.group(0)
+
+        return f"{prefix}{maybe_url}"
+
+    normalized = re.sub(
+        r'(Link\s*tour\s*:\s*)(?:Codice\s*[:\-]?\s*)?["“”`]?([a-z0-9][a-z0-9-]*)["“”`]?',
+        replace_link_line,
+        normalized,
+        flags=re.IGNORECASE
+    )
+
+    return normalized
 
 def generate_tour_txt_content(tour):
     """Genera il contenuto del file .txt per un tour"""
@@ -1214,7 +1276,13 @@ def chat_with_ai():
         # Esegui l'assistant
         run = openai_client.beta.threads.runs.create(
             thread_id=thread.id,
-            assistant_id=assistant_id
+            assistant_id=assistant_id,
+            additional_instructions=(
+                "Rispondi senza citazioni tipo [1], [2] o marker speciali tipo 【...】. "
+                "Quando menzioni un tour, includi link diretto completo se disponibile. "
+                "Parla sempre di Go2West in prima persona plurale (es. 'contattaci'). "
+                "Per contatto usa: preventivi@go2west.org."
+            )
         )
         
         # Attendi il completamento
@@ -1237,6 +1305,9 @@ def chat_with_ai():
                 if message.role == 'assistant':
                     assistant_message = message.content[0].text.value
                     break
+
+            assistant_message = sanitize_assistant_response(assistant_message)
+            assistant_message = normalize_tour_links(assistant_message)
             
             return jsonify({
                 'response': assistant_message,
@@ -1314,7 +1385,7 @@ def index():
         },
         'destinations': ['USA', 'Canada', 'Messico', 'America Centrale', 'Sud America', 'Caraibi', 'Polinesia Francese'],
         'usa_zones': ['EST', 'OVEST', 'EST E OVEST', 'SOUTH', 'MID WEST', 'HAWAII', 'ALASKA'],
-        'types': ['city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'extra'],
+        'types': ['city breaks', 'fly & drive', 'tour guidato', 'camper adventure', 'glamping', 'ranch', 'scoperta in treno', 'hotel/resort', 'combinati', 'luxury travel', 'esperienze ed escursioni', 'extra'],
         'image_types': ['hero', 'carousel1', 'carousel2', 'carousel3', 'image1', 'image2', 'image3', 'image4', 'image5', 'map']
     })
 
