@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+from flask_compress import Compress
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import select
 from datetime import datetime
 import os
 import tempfile
@@ -22,9 +24,30 @@ pymysql.install_as_MySQLdb()
 load_dotenv()
 
 app = Flask(__name__)
+Compress(app)
 
 # Configurazione CORS per permettere le richieste dal frontend
 CORS(app)
+
+# Cache in-memory per le liste tour (evita query ripetute al DB)
+TOURS_CACHE_TTL_SECONDS = int(os.environ.get('TOURS_CACHE_TTL_SECONDS', '120'))
+TOURS_CACHE_ENABLED = os.environ.get('TOURS_CACHE_ENABLED', 'true').lower() == 'true'
+_tours_cache_lock = threading.Lock()
+_tours_cache = {}
+
+TOUR_BINARY_COLUMNS = (
+    'heroImage',
+    'carouselImage1',
+    'carouselImage2',
+    'carouselImage3',
+    'image1',
+    'image2',
+    'image3',
+    'image4',
+    'image5',
+    'mapImage',
+    'pdfUrl',
+)
 
 # Protezione anti-overload (es. picchi anomali / possibile DDoS)
 OVERLOAD_PROTECTION_ENABLED = os.environ.get('OVERLOAD_PROTECTION_ENABLED', 'true').lower() == 'true'
@@ -223,6 +246,171 @@ class Tour(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+
+def invalidate_tours_cache():
+    """Invalida la cache delle liste tour dopo modifiche ai dati."""
+    with _tours_cache_lock:
+        _tours_cache.clear()
+
+def _tour_api_select_columns():
+    """Colonne API senza caricare i BLOB: i flag immagine usano IS NOT NULL."""
+    columns = [
+        Tour.id,
+        Tour.code,
+        Tour.title,
+        Tour.description,
+        Tour.program,
+        Tour.prices,
+        Tour.included,
+        Tour.included_text,
+        Tour.included_mode,
+        Tour.notIncluded,
+        Tour.notIncluded_text,
+        Tour.notIncluded_mode,
+        Tour.duration,
+        Tour.type,
+        Tour.destination,
+        Tour.destinations,
+        Tour.countries,
+        Tour.geographic_area,
+        Tour.notes,
+        Tour.dates,
+        Tour.dates_text,
+        Tour.dates_mode,
+        Tour.minPrice,
+        Tour.pasti,
+        Tour.itinerario,
+        Tour.itinerario_mode,
+        Tour.is_promotion,
+        Tour.created_at,
+        Tour.updated_at,
+    ]
+    for name in TOUR_BINARY_COLUMNS:
+        columns.append(getattr(Tour, name).isnot(None).label(name))
+    return columns
+
+def _row_to_tour_dict(row):
+    data = row._mapping
+    created_at = data.get('created_at')
+    updated_at = data.get('updated_at')
+    min_price = data.get('minPrice')
+
+    return {
+        'id': data['id'],
+        'code': data['code'],
+        'heroImage': bool(data.get('heroImage')),
+        'title': data['title'],
+        'description': data.get('description'),
+        'carouselImage1': bool(data.get('carouselImage1')),
+        'carouselImage2': bool(data.get('carouselImage2')),
+        'carouselImage3': bool(data.get('carouselImage3')),
+        'program': data.get('program'),
+        'image1': bool(data.get('image1')),
+        'image2': bool(data.get('image2')),
+        'image3': bool(data.get('image3')),
+        'image4': bool(data.get('image4')),
+        'image5': bool(data.get('image5')),
+        'prices': data.get('prices'),
+        'included': data.get('included'),
+        'includedText': data.get('included_text'),
+        'includedMode': data.get('included_mode'),
+        'notIncluded': data.get('notIncluded'),
+        'notIncludedText': data.get('notIncluded_text'),
+        'notIncludedMode': data.get('notIncluded_mode'),
+        'duration': data.get('duration'),
+        'type': data.get('type'),
+        'destination': data.get('destination'),
+        'destinations': data.get('destinations') or [],
+        'countries': data.get('countries') or [],
+        'notes': data.get('notes'),
+        'dates': data.get('dates'),
+        'datesText': data.get('dates_text'),
+        'datesMode': data.get('dates_mode'),
+        'minPrice': float(min_price) if min_price is not None else None,
+        'pasti': data.get('pasti'),
+        'itinerario': data.get('itinerario'),
+        'itinerarioMode': data.get('itinerario_mode'),
+        'geographicArea': data.get('geographic_area'),
+        'mapImage': bool(data.get('mapImage')),
+        'pdfUrl': bool(data.get('pdfUrl')),
+        'isPromotion': bool(data.get('is_promotion')),
+        'created_at': created_at.isoformat() if created_at else None,
+        'updated_at': updated_at.isoformat() if updated_at else None,
+    }
+
+def _fetch_tours_for_api(
+    tour_id=None,
+    code=None,
+    is_promotion=None,
+    destination=None,
+    tour_type=None,
+    geographic_area=None,
+):
+    stmt = select(*_tour_api_select_columns()).select_from(Tour)
+
+    if tour_id is not None:
+        stmt = stmt.where(Tour.id == tour_id)
+    if code is not None:
+        stmt = stmt.where(Tour.code == code)
+    if is_promotion is True:
+        stmt = stmt.where(Tour.is_promotion.is_(True))
+    if destination is not None:
+        stmt = stmt.where(Tour.destination == destination)
+    if tour_type is not None:
+        stmt = stmt.where(Tour.type == tour_type)
+    if geographic_area is not None:
+        stmt = stmt.where(Tour.geographic_area == geographic_area)
+
+    stmt = stmt.order_by(Tour.id)
+    rows = db.session.execute(stmt).all()
+    return [_row_to_tour_dict(row) for row in rows]
+
+def _fetch_tour_for_api_by_id(tour_id):
+    tours = _fetch_tours_for_api(tour_id=tour_id)
+    return tours[0] if tours else None
+
+def _fetch_tour_for_api_by_code(code):
+    tours = _fetch_tours_for_api(code=code)
+    return tours[0] if tours else None
+
+def _cache_get(key):
+    if not TOURS_CACHE_ENABLED:
+        return None
+    with _tours_cache_lock:
+        entry = _tours_cache.get(key)
+        if entry and entry['expires_at'] > time.time():
+            return entry['data']
+        if entry:
+            del _tours_cache[key]
+    return None
+
+def _cache_set(key, data):
+    if not TOURS_CACHE_ENABLED:
+        return
+    with _tours_cache_lock:
+        _tours_cache[key] = {
+            'data': data,
+            'expires_at': time.time() + TOURS_CACHE_TTL_SECONDS,
+        }
+
+def _get_cached_tours(cache_key, fetch_fn):
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached, True
+    data = fetch_fn()
+    _cache_set(cache_key, data)
+    return data, False
+
+def _tours_list_response(tours_data, cache_hit=False):
+    response = jsonify(tours_data)
+    response.headers['Cache-Control'] = f'public, max-age={TOURS_CACHE_TTL_SECONDS}'
+    response.headers['X-Cache'] = 'HIT' if cache_hit else 'MISS'
+    return response
+
+def _tour_detail_response(tour_data):
+    response = jsonify(tour_data)
+    response.headers['Cache-Control'] = f'public, max-age={TOURS_CACHE_TTL_SECONDS}'
+    return response
 
 # Modello per i file dei tour nel vector store
 class TourFile(db.Model):
@@ -614,69 +802,65 @@ def overload_guard():
 @app.route('/api/tours', methods=['GET'])
 def get_tours():
     try:
-        # Controlla se è richiesto il filtro per le promozioni
         promotion_filter = request.args.get('promotion')
-        
-        if promotion_filter and promotion_filter.lower() == 'true':
-            # Restituisci solo i tour in promozione
-            tours = Tour.query.filter_by(is_promotion=True).all()
-        else:
-            # Restituisci tutti i tour
-            tours = Tour.query.all()
-            
-        return jsonify([tour.to_dict() for tour in tours])
+        is_promotion = promotion_filter and promotion_filter.lower() == 'true'
+        cache_key = f"tours:promotion={is_promotion}"
+
+        def fetch():
+            if is_promotion:
+                return _fetch_tours_for_api(is_promotion=True)
+            return _fetch_tours_for_api()
+
+        tours_data, cache_hit = _get_cached_tours(cache_key, fetch)
+        return _tours_list_response(tours_data, cache_hit=cache_hit)
     except Exception as e:
         # Se l'errore è dovuto a colonne mancanti, prova con una query SQL raw
         error_msg = str(e).lower()
         if 'destinations' in error_msg or 'countries' in error_msg or 'unknown column' in error_msg:
             try:
-                print(f"⚠️ Colonne destinations/countries non trovate, uso query SQL raw")
-                # Query SQL raw che esclude le colonne opzionali se non esistono
+                print("⚠️ Colonne destinations/countries non trovate, uso query SQL raw")
+                promotion_filter = request.args.get('promotion')
                 promotion_where = "WHERE is_promotion = 1" if promotion_filter and promotion_filter.lower() == 'true' else ""
-                
-                # Prima verifica quali colonne esistono
+                binary_flags = ', '.join(
+                    f"{col} IS NOT NULL AS {col}" for col in TOUR_BINARY_COLUMNS
+                )
+
                 with db.engine.connect() as conn:
-                    # Controlla se le colonne esistono
                     check_cols_query = """
-                        SELECT COLUMN_NAME 
-                        FROM INFORMATION_SCHEMA.COLUMNS 
-                        WHERE TABLE_SCHEMA = DATABASE() 
-                        AND TABLE_NAME = 'tours' 
+                        SELECT COLUMN_NAME
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'tours'
                         AND COLUMN_NAME IN ('destinations', 'countries')
                     """
                     result = conn.execute(db.text(check_cols_query))
                     existing_cols = [row[0] for row in result]
-                    
-                    # Costruisci la query SELECT
+
                     base_cols = [
-                        'id', 'code', 'title', 'description', 'program', 'prices', 
+                        'id', 'code', 'title', 'description', 'program', 'prices',
                         'included', 'notIncluded', 'duration', 'type', 'destination',
-                        'notes', 'dates', 'geographic_area', 'minPrice', 'pasti', 
+                        'notes', 'dates', 'geographic_area', 'minPrice', 'pasti',
                         'itinerario', 'is_promotion', 'created_at', 'updated_at',
                         'included_text', 'included_mode', 'notIncluded_text', 'notIncluded_mode',
                         'dates_text', 'dates_mode', 'itinerario_mode'
                     ]
-                    
-                    # Aggiungi le colonne opzionali solo se esistono
+
                     if 'destinations' in existing_cols:
                         base_cols.append('destinations')
                     if 'countries' in existing_cols:
                         base_cols.append('countries')
-                    
+
                     cols_str = ', '.join(base_cols)
-                    query = f"SELECT {cols_str} FROM tours {promotion_where} ORDER BY id"
-                    
+                    query = f"SELECT {cols_str}, {binary_flags} FROM tours {promotion_where} ORDER BY id"
+
                     result = conn.execute(db.text(query))
                     rows = result.fetchall()
-                    
-                    # Converti i risultati in dizionari
+
                     tours_data = []
                     for row in rows:
                         tour_dict = dict(row._mapping)
-                        # Converti geographic_area in geographicArea
                         if 'geographic_area' in tour_dict:
                             tour_dict['geographicArea'] = tour_dict.pop('geographic_area')
-                        # Assicurati che destinations e countries siano array
                         if 'destinations' not in tour_dict:
                             tour_dict['destinations'] = []
                         elif tour_dict['destinations'] is None:
@@ -685,20 +869,41 @@ def get_tours():
                             tour_dict['countries'] = []
                         elif tour_dict['countries'] is None:
                             tour_dict['countries'] = []
-                        # Converti altri campi se necessario
                         if tour_dict.get('minPrice') is not None:
                             tour_dict['minPrice'] = float(tour_dict['minPrice'])
+                        if 'included_text' in tour_dict:
+                            tour_dict['includedText'] = tour_dict.pop('included_text')
+                        if 'included_mode' in tour_dict:
+                            tour_dict['includedMode'] = tour_dict.pop('included_mode')
+                        if 'notIncluded_text' in tour_dict:
+                            tour_dict['notIncludedText'] = tour_dict.pop('notIncluded_text')
+                        if 'notIncluded_mode' in tour_dict:
+                            tour_dict['notIncludedMode'] = tour_dict.pop('notIncluded_mode')
+                        if 'dates_text' in tour_dict:
+                            tour_dict['datesText'] = tour_dict.pop('dates_text')
+                        if 'dates_mode' in tour_dict:
+                            tour_dict['datesMode'] = tour_dict.pop('dates_mode')
+                        if 'itinerario_mode' in tour_dict:
+                            tour_dict['itinerarioMode'] = tour_dict.pop('itinerario_mode')
+                        if 'is_promotion' in tour_dict:
+                            tour_dict['isPromotion'] = bool(tour_dict.pop('is_promotion'))
+                        for binary_col in TOUR_BINARY_COLUMNS:
+                            if binary_col in tour_dict:
+                                tour_dict[binary_col] = bool(tour_dict[binary_col])
+                        if tour_dict.get('created_at'):
+                            tour_dict['created_at'] = tour_dict['created_at'].isoformat()
+                        if tour_dict.get('updated_at'):
+                            tour_dict['updated_at'] = tour_dict['updated_at'].isoformat()
                         tours_data.append(tour_dict)
-                    
-                    return jsonify(tours_data)
+
+                    return _tours_list_response(tours_data, cache_hit=False)
             except Exception as e2:
                 import traceback
                 error_trace = traceback.format_exc()
                 print(f"ERRORE anche con query SQL raw: {str(e2)}")
                 print(f"Traceback: {error_trace}")
                 return jsonify({'error': str(e2), 'traceback': error_trace}), 500
-        
-        # Se l'errore non è relativo alle colonne mancanti, restituisci l'errore originale
+
         import traceback
         error_trace = traceback.format_exc()
         print(f"ERRORE in get_tours(): {str(e)}")
@@ -709,8 +914,10 @@ def get_tours():
 @app.route('/api/tours/<int:tour_id>', methods=['GET'])
 def get_tour(tour_id):
     try:
-        tour = Tour.query.get_or_404(tour_id)
-        return jsonify(tour.to_dict())
+        tour_data = _fetch_tour_for_api_by_id(tour_id)
+        if not tour_data:
+            return jsonify({'error': 'Tour non trovato'}), 404
+        return _tour_detail_response(tour_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -816,13 +1023,15 @@ def create_tour():
         
         db.session.add(tour)
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         # Crea il file nel vector store
         vector_result = create_tour_file_in_vector_store(tour)
         if not vector_result['success']:
             print(f"Errore nella creazione del file vector store per tour {tour.id}: {vector_result.get('error')}")
-        
-        return jsonify(tour.to_dict()), 201
+
+        tour_data = _fetch_tour_for_api_by_id(tour.id)
+        return jsonify(tour_data), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -913,13 +1122,15 @@ def update_tour(tour_id):
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         # Aggiorna il file nel vector store
         vector_result = create_tour_file_in_vector_store(tour)
         if not vector_result['success']:
             print(f"Errore nell'aggiornamento del file vector store per tour {tour.id}: {vector_result.get('error')}")
-        
-        return jsonify(tour.to_dict())
+
+        tour_data = _fetch_tour_for_api_by_id(tour.id)
+        return jsonify(tour_data)
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
@@ -937,6 +1148,7 @@ def delete_tour(tour_id):
         
         db.session.delete(tour)
         db.session.commit()
+        invalidate_tours_cache()
         return jsonify({'message': 'Tour eliminato con successo'})
     except Exception as e:
         db.session.rollback()
@@ -946,8 +1158,12 @@ def delete_tour(tour_id):
 @app.route('/api/tours/destination/<destination>', methods=['GET'])
 def get_tours_by_destination(destination):
     try:
-        tours = Tour.query.filter_by(destination=destination).all()
-        return jsonify([tour.to_dict() for tour in tours])
+        cache_key = f"tours:destination={destination}"
+        tours_data, cache_hit = _get_cached_tours(
+            cache_key,
+            lambda: _fetch_tours_for_api(destination=destination),
+        )
+        return _tours_list_response(tours_data, cache_hit=cache_hit)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -955,8 +1171,12 @@ def get_tours_by_destination(destination):
 @app.route('/api/tours/type/<tour_type>', methods=['GET'])
 def get_tours_by_type(tour_type):
     try:
-        tours = Tour.query.filter_by(type=tour_type).all()
-        return jsonify([tour.to_dict() for tour in tours])
+        cache_key = f"tours:type={tour_type}"
+        tours_data, cache_hit = _get_cached_tours(
+            cache_key,
+            lambda: _fetch_tours_for_api(tour_type=tour_type),
+        )
+        return _tours_list_response(tours_data, cache_hit=cache_hit)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -964,8 +1184,12 @@ def get_tours_by_type(tour_type):
 @app.route('/api/tours/destination/<destination>/type/<tour_type>', methods=['GET'])
 def get_tours_by_destination_and_type(destination, tour_type):
     try:
-        tours = Tour.query.filter_by(destination=destination, type=tour_type).all()
-        return jsonify([tour.to_dict() for tour in tours])
+        cache_key = f"tours:destination={destination}:type={tour_type}"
+        tours_data, cache_hit = _get_cached_tours(
+            cache_key,
+            lambda: _fetch_tours_for_api(destination=destination, tour_type=tour_type),
+        )
+        return _tours_list_response(tours_data, cache_hit=cache_hit)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -973,11 +1197,10 @@ def get_tours_by_destination_and_type(destination, tour_type):
 @app.route('/api/tours/code/<code>', methods=['GET'])
 def get_tour_by_code(code):
     try:
-        tour = Tour.query.filter_by(code=code).first()
-        if tour:
-            return jsonify(tour.to_dict())
-        else:
-            return jsonify({'error': 'Tour non trovato'}), 404
+        tour_data = _fetch_tour_for_api_by_code(code)
+        if tour_data:
+            return _tour_detail_response(tour_data)
+        return jsonify({'error': 'Tour non trovato'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -985,8 +1208,12 @@ def get_tour_by_code(code):
 @app.route('/api/tours/area/<geographic_area>', methods=['GET'])
 def get_tours_by_area(geographic_area):
     try:
-        tours = Tour.query.filter_by(geographic_area=geographic_area).all()
-        return jsonify([tour.to_dict() for tour in tours])
+        cache_key = f"tours:area={geographic_area}"
+        tours_data, cache_hit = _get_cached_tours(
+            cache_key,
+            lambda: _fetch_tours_for_api(geographic_area=geographic_area),
+        )
+        return _tours_list_response(tours_data, cache_hit=cache_hit)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1002,10 +1229,12 @@ def update_tour_promotion(tour_id):
             tour.is_promotion = bool(data['isPromotion'])
             tour.updated_at = datetime.utcnow()
             db.session.commit()
-            
+            invalidate_tours_cache()
+
+            tour_data = _fetch_tour_for_api_by_id(tour_id)
             return jsonify({
                 'message': 'Stato promozione aggiornato con successo',
-                'tour': tour.to_dict()
+                'tour': tour_data
             })
         else:
             return jsonify({'error': 'Campo isPromotion richiesto'}), 400
@@ -1105,7 +1334,8 @@ def upload_tour_image(tour_id, image_type):
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         print(f"SUCCESS: Immagine {image_type} caricata con successo per tour {tour_id}")
         return jsonify({'message': f'Immagine {image_type} caricata con successo'})
     except Exception as e:
@@ -1148,7 +1378,8 @@ def delete_tour_image(tour_id, image_type):
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         print(f"SUCCESS: Immagine {image_type} eliminata con successo per tour {tour_id}")
         return jsonify({'message': f'Immagine {image_type} eliminata con successo'})
     except Exception as e:
@@ -1206,7 +1437,8 @@ def upload_tour_pdf(tour_id):
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         print(f"SUCCESS: PDF caricato con successo per tour {tour_id}")
         return jsonify({
             'message': 'PDF caricato con successo',
@@ -1234,7 +1466,8 @@ def delete_tour_pdf(tour_id):
         tour.updated_at = datetime.utcnow()
         
         db.session.commit()
-        
+        invalidate_tours_cache()
+
         print(f"SUCCESS: PDF eliminato con successo per tour {tour_id}")
         return jsonify({'message': 'PDF eliminato con successo'})
     except Exception as e:
