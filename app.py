@@ -1681,7 +1681,16 @@ def sync_vector_store():
 # Route di health check per Render
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'healthy', 'message': 'Server funzionante'})
+    return jsonify({
+        'status': 'healthy',
+        'message': 'Server funzionante',
+        'chatbot': {
+            'enabled': CHATBOT_ENABLED,
+            'engine': 'responses',
+            'model': CHAT_MODEL if CHATBOT_ENABLED else None,
+            'vector_store_id': VECTOR_STORE_ID if CHATBOT_ENABLED else None
+        }
+    })
 
 # Route principale
 @app.route('/', methods=['GET'])
