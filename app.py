@@ -177,6 +177,7 @@ class Tour(db.Model):
     countries = db.Column(db.JSON, nullable=True)  # Array JSON di paesi
     geographic_area = db.Column(db.String(100))  # Es: "Sud America", "Nord America", "Centro America", "Oceania"
     notes = db.Column(db.Text)
+    fornitore = db.Column(db.String(255))  # Fornitore da cui è stato preso il tour
     dates = db.Column(db.JSON)
     dates_text = db.Column(db.Text)  # Testo unico per dates quando dates_mode = 'unique'
     dates_mode = db.Column(db.Enum('unique', 'structured'), default='structured')  # 'unique' per testo unico, 'structured' per JSON strutturato
@@ -232,6 +233,7 @@ class Tour(db.Model):
             'destinations': destinations,
             'countries': countries,
             'notes': self.notes,
+            'fornitore': self.fornitore,
             'dates': self.dates,
             'datesText': self.dates_text,
             'datesMode': self.dates_mode,
@@ -274,6 +276,7 @@ def _tour_api_select_columns():
         Tour.countries,
         Tour.geographic_area,
         Tour.notes,
+        Tour.fornitore,
         Tour.dates,
         Tour.dates_text,
         Tour.dates_mode,
@@ -323,6 +326,7 @@ def _row_to_tour_dict(row):
         'destinations': data.get('destinations') or [],
         'countries': data.get('countries') or [],
         'notes': data.get('notes'),
+        'fornitore': data.get('fornitore'),
         'dates': data.get('dates'),
         'datesText': data.get('dates_text'),
         'datesMode': data.get('dates_mode'),
@@ -839,7 +843,7 @@ def get_tours():
                     base_cols = [
                         'id', 'code', 'title', 'description', 'program', 'prices',
                         'included', 'notIncluded', 'duration', 'type', 'destination',
-                        'notes', 'dates', 'geographic_area', 'minPrice', 'pasti',
+                        'notes', 'fornitore', 'dates', 'geographic_area', 'minPrice', 'pasti',
                         'itinerario', 'is_promotion', 'created_at', 'updated_at',
                         'included_text', 'included_mode', 'notIncluded_text', 'notIncluded_mode',
                         'dates_text', 'dates_mode', 'itinerario_mode'
@@ -1011,6 +1015,7 @@ def create_tour():
             countries=data.get('countries'),
             geographic_area=data.get('geographicArea'),
             notes=data.get('notes'),
+            fornitore=data.get('fornitore'),
             dates=dates_data,
             dates_text=dates_text_data,
             dates_mode=dates_mode,
@@ -1115,6 +1120,7 @@ def update_tour(tour_id):
         tour.countries = data.get('countries')
         tour.geographic_area = data.get('geographicArea')
         tour.notes = data.get('notes')
+        tour.fornitore = data.get('fornitore')
         tour.minPrice = data.get('minPrice')
         tour.pasti = data.get('pasti')
         tour.itinerario_mode = itinerario_mode
