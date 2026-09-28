@@ -136,13 +136,29 @@ except Exception as e:
     openai_client = None
     CHATBOT_ENABLED = False
 
-# ID del vector store e assistant
+# ID del vector store OpenAI (file search)
 VECTOR_STORE_ID = "vs_68f350c542d88191a4026139f8bae406"
-ASSISTANT_ID = "asst_cxykjx2GVPkdYqmHXhRrD6D5"
+CHAT_MODEL = os.environ.get('CHAT_MODEL', 'gpt-4o-mini')
 TOUR_PUBLIC_URL_TEMPLATE = os.environ.get(
     'TOUR_PUBLIC_URL_TEMPLATE',
     'https://www.go2west.org/tour/{code}'
 )
+CONTACT_EMAIL = 'preventivi@go2west.org'
+CHATBOT_SYSTEM_INSTRUCTIONS = f"""
+Sei l'assistente virtuale ufficiale di Go2West (noi del team Go2West).
+Rispondi SEMPRE in italiano, in modo chiaro, cordiale e professionale.
+
+REGOLE OBBLIGATORIE:
+1. Usa SOLO le informazioni trovate nei file del vector store sui nostri tour.
+2. Quando consigli o descrivi uno o più tour, sii specifico: titolo, destinazione, durata, prezzo minimo se disponibile, punti salienti.
+3. Per OGNI tour citato includi SEMPRE il link completo alla pagina pubblica (campo LINK TOUR nei file). Se manca, costruiscilo come https://www.go2west.org/tour/{{CODICE}} usando il CODICE del tour.
+4. Preferisci elenchi brevi e leggibili. Se ci sono più opzioni, proponi 2-4 tour rilevanti con link, non risposte vaghe.
+5. Non inventare tour, prezzi, date o dettagli assenti dai file.
+6. Parla SEMPRE in prima persona plurale come Go2West: "contattaci", "ti aiutiamo noi", "i nostri tour". Non dire mai "contatta Go2West" o "contatta l'agenzia" come se fossimo esterni.
+7. Per preventivi, disponibilità precise, personalizzazioni o prenotazioni invita a contattarci alla mail {CONTACT_EMAIL}.
+8. Non usare citazioni tecniche, marker tipo 【...】, riferimenti [1]/[2] o nomi file.
+9. Se non trovi informazioni utili nei file, dillo chiaramente e invita a scriverci a {CONTACT_EMAIL}.
+""".strip()
 
 # Modello per i tour
 class Tour(db.Model):
@@ -442,6 +458,12 @@ class TourFile(db.Model):
 
 # Funzioni per la gestione del vector store e file .txt
 
+def _vector_stores_api():
+    """Compatibilità SDK OpenAI: vector_stores può essere top-level o in beta."""
+    if hasattr(openai_client, 'vector_stores'):
+        return openai_client.vector_stores
+    return openai_client.beta.vector_stores
+
 def build_tour_public_url(tour_code):
     """Costruisce l'URL pubblico del tour a partire dal codice."""
     if not tour_code:
@@ -452,6 +474,22 @@ def build_tour_public_url(tour_code):
     except Exception:
         # Se il template è malformato, usa un fallback sicuro.
         return f"https://www.go2west.org/tour/{tour_code}"
+
+def extract_response_text(response):
+    """Estrae il testo utile da una Responses API result."""
+    output_text = getattr(response, 'output_text', None)
+    if output_text:
+        return output_text
+
+    texts = []
+    for item in getattr(response, 'output', None) or []:
+        if getattr(item, 'type', None) != 'message':
+            continue
+        for content in getattr(item, 'content', None) or []:
+            content_type = getattr(content, 'type', None)
+            if content_type in ('output_text', 'text'):
+                texts.append(getattr(content, 'text', '') or '')
+    return "\n".join(t for t in texts if t).strip()
 
 def sanitize_assistant_response(text):
     """Pulisce la risposta dell'assistant da citazioni e riferimenti tecnici."""
@@ -509,6 +547,14 @@ def normalize_tour_links(text):
     normalized = re.sub(
         r'(Link\s*tour\s*:\s*)(?:Codice\s*[:\-]?\s*)?["“”`]?([a-z0-9][a-z0-9-]*)["“”`]?',
         replace_link_line,
+        normalized,
+        flags=re.IGNORECASE
+    )
+
+    # Converte pattern "go2west.org/tour/CODICE" senza schema in URL completi
+    normalized = re.sub(
+        r'(?<!https://)(?<!http://)(?:www\.)?go2west\.org/tour/([a-z0-9][a-z0-9-]*)',
+        lambda m: build_tour_public_url(m.group(1)) or m.group(0),
         normalized,
         flags=re.IGNORECASE
     )
@@ -618,12 +664,14 @@ def create_tour_file_in_vector_store(tour):
         }
     
     try:
+        vector_stores = _vector_stores_api()
+
         # PRIMA: Rimuovi il file vecchio se esiste (senza eliminare il record dal database)
         existing_tour_file = TourFile.query.filter_by(tour_id=tour.id).first()
         if existing_tour_file and existing_tour_file.vector_store_file_id:
             try:
                 # Rimuovi il file dal vector store
-                openai_client.beta.vector_stores.files.delete(
+                vector_stores.files.delete(
                     vector_store_id=VECTOR_STORE_ID,
                     file_id=existing_tour_file.vector_store_file_id
                 )
@@ -640,24 +688,25 @@ def create_tour_file_in_vector_store(tour):
         # Genera il contenuto del file
         content = generate_tour_txt_content(tour)
         
-        # Nome del file
+        # Nome del file (deve essere questo in upload, non il nome tmp di sistema)
         filename = f"tour_{tour.id}_{tour.code}.txt"
         
-        # Crea un file temporaneo
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as temp_file:
+        # Crea un file temporaneo con il nome corretto
+        temp_dir = tempfile.mkdtemp()
+        temp_file_path = os.path.join(temp_dir, filename)
+        with open(temp_file_path, 'w', encoding='utf-8') as temp_file:
             temp_file.write(content)
-            temp_file_path = temp_file.name
         
         try:
-            # Carica il nuovo file nel vector store
+            # Carica il nuovo file nel vector store con filename esplicito
             with open(temp_file_path, 'rb') as file_to_upload:
                 vector_file = openai_client.files.create(
-                    file=file_to_upload,
+                    file=(filename, file_to_upload),
                     purpose='assistants'
                 )
             
             # Aggiungi il nuovo file al vector store
-            openai_client.beta.vector_stores.files.create(
+            vector_stores.files.create(
                 vector_store_id=VECTOR_STORE_ID,
                 file_id=vector_file.id
             )
@@ -686,8 +735,15 @@ def create_tour_file_in_vector_store(tour):
             }
             
         finally:
-            # Rimuovi il file temporaneo
-            os.unlink(temp_file_path)
+            # Rimuovi il file temporaneo e la cartella
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                pass
+            try:
+                os.rmdir(temp_dir)
+            except OSError:
+                pass
             
     except Exception as e:
         print(f"Errore nella creazione del file nel vector store: {e}")
@@ -705,6 +761,8 @@ def delete_tour_file_from_vector_store(tour_id):
         }
     
     try:
+        vector_stores = _vector_stores_api()
+
         # Trova il record nel database
         tour_file = TourFile.query.filter_by(tour_id=tour_id).first()
         
@@ -713,7 +771,7 @@ def delete_tour_file_from_vector_store(tour_id):
         
         try:
             # Rimuovi il file dal vector store
-            openai_client.beta.vector_stores.files.delete(
+            vector_stores.files.delete(
                 vector_store_id=VECTOR_STORE_ID,
                 file_id=tour_file.vector_store_file_id
             )
@@ -737,6 +795,50 @@ def delete_tour_file_from_vector_store(tour_id):
             'success': False,
             'error': str(e)
         }
+
+def cleanup_orphan_vector_store_files():
+    """Rimuove dal vector store i file non collegati a tour esistenti."""
+    if not CHATBOT_ENABLED or not openai_client:
+        return {'removed': 0, 'errors': 0}
+
+    vector_stores = _vector_stores_api()
+    tracked_ids = {
+        tf.vector_store_file_id
+        for tf in TourFile.query.filter(TourFile.vector_store_file_id.isnot(None)).all()
+    }
+
+    removed = 0
+    errors = 0
+    after = None
+
+    while True:
+        list_kwargs = {'vector_store_id': VECTOR_STORE_ID, 'limit': 100}
+        if after:
+            list_kwargs['after'] = after
+        page = vector_stores.files.list(**list_kwargs)
+
+        for vs_file in page.data:
+            if vs_file.id in tracked_ids:
+                continue
+            try:
+                vector_stores.files.delete(
+                    vector_store_id=VECTOR_STORE_ID,
+                    file_id=vs_file.id
+                )
+                try:
+                    openai_client.files.delete(vs_file.id)
+                except Exception:
+                    pass
+                removed += 1
+            except Exception as e:
+                errors += 1
+                print(f"⚠️ Errore cleanup file orfano {vs_file.id}: {e}")
+
+        if not getattr(page, 'has_more', False) or not page.data:
+            break
+        after = page.data[-1].id
+
+    return {'removed': removed, 'errors': errors}
 
 # Creazione delle tabelle
 with app.app_context():
@@ -1237,6 +1339,11 @@ def update_tour_promotion(tour_id):
             db.session.commit()
             invalidate_tours_cache()
 
+            # Allinea anche il vector store (il flag promozione è nei file .txt)
+            vector_result = create_tour_file_in_vector_store(tour)
+            if not vector_result['success']:
+                print(f"Errore sync vector store su promotion tour {tour_id}: {vector_result.get('error')}")
+
             tour_data = _fetch_tour_for_api_by_id(tour_id)
             return jsonify({
                 'message': 'Stato promozione aggiornato con successo',
@@ -1488,7 +1595,7 @@ def delete_tour_pdf(tour_id):
 def chat_with_ai():
     if not CHATBOT_ENABLED or not openai_client:
         return jsonify({
-            'error': 'Chatbot non disponibile al momento. Contattaci a preventivi@go2west.org e ti aiutiamo noi.',
+            'error': f'Chatbot non disponibile al momento. Contattaci a {CONTACT_EMAIL} e ti aiutiamo noi.',
             'status': 'error'
         }), 503
     
@@ -1498,65 +1605,33 @@ def chat_with_ai():
         
         if not user_message:
             return jsonify({'error': 'Messaggio richiesto'}), 400
-        
-        # Utilizza l'assistant esistente
-        assistant_id = ASSISTANT_ID
-        
-        # Crea un thread per la conversazione
-        thread = openai_client.beta.threads.create()
-        
-        # Aggiungi il messaggio dell'utente
-        openai_client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=user_message
-        )
-        
-        # Esegui l'assistant
-        run = openai_client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant_id,
-            additional_instructions=(
-                "Rispondi senza citazioni tipo [1], [2] o marker speciali tipo 【...】. "
-                "Quando menzioni un tour, includi link diretto completo se disponibile. "
-                "Parla sempre di Go2West in prima persona plurale (es. 'contattaci'). "
-                "Per contatto usa: preventivi@go2west.org."
-            )
-        )
-        
-        # Attendi il completamento
-        import time
-        while run.status in ['queued', 'in_progress']:
-            time.sleep(1)
-            run = openai_client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
-                run_id=run.id
-            )
-        
-        if run.status == 'completed':
-            # Ottieni la risposta
-            messages = openai_client.beta.threads.messages.list(
-                thread_id=thread.id
-            )
-            
-            assistant_message = None
-            for message in messages.data:
-                if message.role == 'assistant':
-                    assistant_message = message.content[0].text.value
-                    break
 
-            assistant_message = sanitize_assistant_response(assistant_message)
-            assistant_message = normalize_tour_links(assistant_message)
-            
+        # Responses API + file_search sul vector store dei tour
+        response = openai_client.responses.create(
+            model=CHAT_MODEL,
+            input=user_message,
+            instructions=CHATBOT_SYSTEM_INSTRUCTIONS,
+            tools=[{
+                'type': 'file_search',
+                'vector_store_ids': [VECTOR_STORE_ID]
+            }],
+            temperature=0.3,
+        )
+
+        assistant_message = extract_response_text(response)
+        if not assistant_message:
             return jsonify({
-                'response': assistant_message,
-                'status': 'success'
-            })
-        else:
-            return jsonify({
-                'error': f'Errore nell\'elaborazione: {run.status}',
+                'error': f'Nessuna risposta generata. Contattaci a {CONTACT_EMAIL}.',
                 'status': 'error'
             }), 500
+
+        assistant_message = sanitize_assistant_response(assistant_message)
+        assistant_message = normalize_tour_links(assistant_message)
+        
+        return jsonify({
+            'response': assistant_message,
+            'status': 'success'
+        })
             
     except Exception as e:
         print(f"Errore nel chatbot: {e}")
@@ -1575,6 +1650,7 @@ def sync_vector_store():
         tours = Tour.query.all()
         success_count = 0
         error_count = 0
+        errors = []
         
         for tour in tours:
             result = create_tour_file_in_vector_store(tour)
@@ -1582,13 +1658,21 @@ def sync_vector_store():
                 success_count += 1
             else:
                 error_count += 1
-                print(f"Errore sincronizzazione tour {tour.id}: {result.get('error')}")
+                err = result.get('error')
+                errors.append({'tour_id': tour.id, 'error': err})
+                print(f"Errore sincronizzazione tour {tour.id}: {err}")
+
+        # Rimuove file orfani (es. tmp* vecchi o tour eliminati)
+        cleanup = cleanup_orphan_vector_store_files()
         
         return jsonify({
             'message': 'Sincronizzazione completata',
             'success_count': success_count,
             'error_count': error_count,
-            'total_tours': len(tours)
+            'total_tours': len(tours),
+            'orphans_removed': cleanup.get('removed', 0),
+            'orphan_errors': cleanup.get('errors', 0),
+            'errors': errors[:20]
         })
         
     except Exception as e:
